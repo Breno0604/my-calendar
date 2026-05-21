@@ -86,6 +86,8 @@ const events = ref([])
 const showAddModal = ref(false)
 const showEditModal = ref(false)
 const showSettingsModal = ref(false)
+const showRecurrenceConfirm = ref(false)
+const recurrencePending = ref(null)
 const isSidebarOpen = ref(window.innerWidth > 1024)
 
 // --- Settings Environment Forms State ---
@@ -119,7 +121,20 @@ const eventForm = ref({
   timeStart: '09:00',
   timeEnd: '10:00',
   categoryId: 'trabalho',
-  subcategoryId: 'reuniao'
+  subcategoryId: 'reuniao',
+  recurrence: null,
+  exceptions: {}
+})
+
+const editingExceptionDate = ref(null)
+const recurForm = ref({
+  freq: 'none',
+  interval: 1,
+  endType: 'never',
+  endCount: 10,
+  endDate: '',
+  byDay: [],
+  byMonthDay: 1
 })
 
 // --- Helper Date Formatting (PT-BR) ---
@@ -147,6 +162,85 @@ const toDateString = (date) => {
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const d = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
+}
+
+const parseDate = (dateStr) => {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+const getNextRecurDate = (current, r) => {
+  const d = new Date(current)
+  if (r.freq === 'daily') {
+    d.setDate(d.getDate() + r.interval)
+  } else if (r.freq === 'weekly') {
+    if (r.byDay && r.byDay.length > 0 && r.byDay.length < 7) {
+      const startWeek = Math.floor(current.getTime() / (7 * 86400000))
+      for (let i = 1; i <= 14; i++) {
+        const test = new Date(current)
+        test.setDate(test.getDate() + i)
+        if (r.byDay.includes(test.getDay())) {
+          const testWeek = Math.floor(test.getTime() / (7 * 86400000))
+          if ((testWeek - startWeek) % r.interval === 0) return test
+        }
+      }
+    }
+    d.setDate(d.getDate() + 7 * r.interval)
+  } else if (r.freq === 'monthly') {
+    d.setMonth(d.getMonth() + r.interval)
+  } else if (r.freq === 'yearly') {
+    d.setFullYear(d.getFullYear() + r.interval)
+  }
+  return d
+}
+
+const expandRecurrences = (event, rangeStart, rangeEnd) => {
+  if (!event.recurrence) return [event]
+
+  const r = event.recurrence
+  const results = []
+  const start = parseDate(event.date)
+  const rangeStartD = parseDate(rangeStart)
+  const rangeEndD = parseDate(rangeEnd)
+
+  const maxFuture = new Date(start)
+  maxFuture.setFullYear(maxFuture.getFullYear() + 1)
+
+  let end = r.until ? parseDate(r.until) : new Date(maxFuture)
+  if (end > maxFuture) end = maxFuture
+  if (end > rangeEndD) end = rangeEndD
+  if (end < start) return []
+
+  let count = 0
+  let current = new Date(start)
+
+  while (current <= end) {
+    const dStr = toDateString(current)
+    count++
+
+    if (dStr >= rangeStart) {
+      const exc = event.exceptions?.[dStr]
+      if (exc?.deleted) {
+        // skip
+      } else {
+        results.push({
+          ...event,
+          ...exc,
+          date: dStr,
+          id: event.id + '_' + dStr.replace(/-/g, ''),
+          _masterId: event.id,
+          _isRecurringInstance: true
+        })
+      }
+    }
+
+    if (r.count && count >= r.count) break
+    if (count > 1000) break
+
+    current = getNextRecurDate(current, r)
+  }
+
+  return results
 }
 
 // --- Dynamic Styling & Badge Helpers ---
@@ -481,18 +575,29 @@ const filteredEvents = computed(() => {
 
 const groupedEvents = computed(() => {
   const groups = {}
-  
+  const today = new Date()
+  const year = currentDate.value.getFullYear()
+  const month = currentDate.value.getMonth()
+  const firstOfMonth = new Date(year, month, 1)
+  const firstOfNext = new Date(year, month + 1, 1)
+  const rangeStart = toDateString(firstOfMonth)
+  const rangeEnd = toDateString(new Date(firstOfNext.getTime() - 1))
+
   filteredEvents.value.forEach(e => {
-    if (!groups[e.date]) {
-      groups[e.date] = []
-    }
-    groups[e.date].push(e)
+    const expanded = expandRecurrences(e, rangeStart, rangeEnd)
+    expanded.forEach(inst => {
+      if (!groups[inst.date]) {
+        groups[inst.date] = []
+      }
+      groups[inst.date].push(inst)
+    })
   })
-  
+
   const sortedDates = Object.keys(groups).sort()
   const result = []
-  
+
   sortedDates.forEach(dateStr => {
+    groups[dateStr].sort((a, b) => a.timeStart.localeCompare(b.timeStart))
     const d = new Date(dateStr + 'T00:00:00')
     result.push({
       dateString: dateStr,
@@ -500,30 +605,46 @@ const groupedEvents = computed(() => {
       events: groups[dateStr]
     })
   })
-  
+
   return result
 })
 
 const getEventsForDate = (dateStr) => {
-  return filteredEvents.value.filter(e => e.date === dateStr)
+  const result = []
+  filteredEvents.value.forEach(e => {
+    const expanded = expandRecurrences(e, dateStr, dateStr)
+    expanded.forEach(inst => {
+      if (inst.date === dateStr) result.push(inst)
+    })
+  })
+  return result.sort((a, b) => a.timeStart.localeCompare(b.timeStart))
 }
 
 const hasEventsOnDate = (dateStr) => {
   return events.value.some(e => {
-    return e.date === dateStr &&
-      activeCategoryFilters.value[e.categoryId] &&
-      activeSubcategoryFilters.value[e.subcategoryId]
+    if (!activeCategoryFilters.value[e.categoryId]) return false
+    if (!activeSubcategoryFilters.value[e.subcategoryId]) return false
+    if (e.date === dateStr) {
+      const exc = e.exceptions?.[dateStr]
+      if (exc?.deleted) return false
+      return true
+    }
+    if (e.recurrence) {
+      const expanded = expandRecurrences(e, dateStr, dateStr)
+      return expanded.some(inst => inst.date === dateStr)
+    }
+    return false
   })
 }
 
 // --- CRUD Actions for Events ---
 const openAddEventModal = (dateStr = null) => {
   const dStr = dateStr || toDateString(selectedDate.value)
-  
+
   const defaultCatId = categoriesData.value[0]?.id || ''
   const defaultCat = categoriesData.value.find(c => c.id === defaultCatId)
   const defaultSubId = defaultCat?.subcategories[0]?.id || ''
-  
+
   eventForm.value = {
     id: null,
     title: '',
@@ -532,29 +653,94 @@ const openAddEventModal = (dateStr = null) => {
     timeStart: '09:00',
     timeEnd: '10:00',
     categoryId: defaultCatId,
-    subcategoryId: defaultSubId
+    subcategoryId: defaultSubId,
+    recurrence: null,
+    exceptions: {}
   }
-  
+
+  recurForm.value = {
+    freq: 'none',
+    interval: 1,
+    endType: 'never',
+    endCount: 10,
+    endDate: '',
+    byDay: [],
+    byMonthDay: 1
+  }
+
   showAddModal.value = true
 }
 
 const openEditEventModal = (event, e) => {
   if (e) e.stopPropagation()
-  
+  editingExceptionDate.value = null
+
+  if (event._isRecurringInstance) {
+    recurrencePending.value = { event, action: 'edit' }
+    showRecurrenceConfirm.value = true
+    return
+  }
+
   eventForm.value = {
     ...event
   }
+
+  if (event.recurrence) {
+    const r = event.recurrence
+    recurForm.value = {
+      freq: r.freq,
+      interval: r.interval,
+      endType: r.until ? 'date' : (r.count ? 'count' : 'never'),
+      endCount: r.count || 10,
+      endDate: r.until || '',
+      byDay: r.byDay || [],
+      byMonthDay: r.byMonthDay || 1
+    }
+  } else {
+    recurForm.value = {
+      freq: 'none',
+      interval: 1,
+      endType: 'never',
+      endCount: 10,
+      endDate: '',
+      byDay: [],
+      byMonthDay: 1
+    }
+  }
+
   showEditModal.value = true
+}
+
+const buildRecurrence = () => {
+  if (recurForm.value.freq === 'none') return null
+  const r = {
+    freq: recurForm.value.freq,
+    interval: recurForm.value.interval || 1
+  }
+  if (recurForm.value.freq === 'weekly' && recurForm.value.byDay.length > 0) {
+    r.byDay = [...recurForm.value.byDay]
+  }
+  if (recurForm.value.freq === 'monthly') {
+    r.byMonthDay = recurForm.value.byMonthDay || 1
+  }
+  if (recurForm.value.endType === 'count') {
+    r.count = recurForm.value.endCount || 10
+  } else if (recurForm.value.endType === 'date') {
+    r.until = recurForm.value.endDate
+  }
+  return r
 }
 
 const saveNewEvent = () => {
   if (!eventForm.value.title.trim()) return
-  
+
   const newEv = {
     ...eventForm.value,
-    id: Date.now()
+    id: Date.now(),
+    recurrence: buildRecurrence(),
+    exceptions: {}
   }
-  
+
   events.value.push(newEv)
   saveToStorage()
   showAddModal.value = false
@@ -562,10 +748,29 @@ const saveNewEvent = () => {
 
 const saveEditedEvent = () => {
   if (!eventForm.value.title.trim()) return
-  
+
+  if (editingExceptionDate.value) {
+    const master = events.value.find(e => e.id === eventForm.value.id)
+    if (master) {
+      if (!master.exceptions) master.exceptions = {}
+      const overrideFields = ['title', 'description', 'date', 'timeStart', 'timeEnd', 'categoryId', 'subcategoryId']
+      const exc = {}
+      overrideFields.forEach(f => { exc[f] = eventForm.value[f] })
+      master.exceptions[editingExceptionDate.value] = exc
+      events.value = [...events.value]
+      saveToStorage()
+    }
+    editingExceptionDate.value = null
+    showEditModal.value = false
+    return
+  }
+
   const index = events.value.findIndex(e => e.id === eventForm.value.id)
   if (index !== -1) {
-    events.value[index] = { ...eventForm.value }
+    events.value[index] = {
+      ...eventForm.value,
+      recurrence: buildRecurrence()
+    }
     saveToStorage()
   }
   showEditModal.value = false
@@ -573,9 +778,86 @@ const saveEditedEvent = () => {
 
 const deleteEvent = () => {
   if (!eventForm.value.id) return
-  
   events.value = events.value.filter(e => e.id !== eventForm.value.id)
   saveToStorage()
+  showEditModal.value = false
+}
+
+const handleRecurrenceConfirm = (choice) => {
+  if (!recurrencePending.value) return
+  const { event, action } = recurrencePending.value
+
+  if (action === 'delete') {
+    if (choice === 'all') {
+      events.value = events.value.filter(e => e.id === event._masterId ? false : true)
+    } else {
+      const master = events.value.find(e => e.id === event._masterId)
+      if (master) {
+        if (!master.exceptions) master.exceptions = {}
+        master.exceptions[event.date] = { deleted: true }
+        events.value = [...events.value]
+      }
+    }
+    saveToStorage()
+  } else if (action === 'edit') {
+    if (choice === 'all') {
+      const master = events.value.find(e => e.id === event._masterId)
+      if (master) {
+        eventForm.value = { ...master, recurrence: master.recurrence ? { ...master.recurrence } : null }
+        if (master.recurrence) {
+          const r = master.recurrence
+          recurForm.value = {
+            freq: r.freq,
+            interval: r.interval,
+            endType: r.until ? 'date' : (r.count ? 'count' : 'never'),
+            endCount: r.count || 10,
+            endDate: r.until || '',
+            byDay: r.byDay || [],
+            byMonthDay: r.byMonthDay || 1
+          }
+        } else {
+          recurForm.value = { freq: 'none', interval: 1, endType: 'never', endCount: 10, endDate: '', byDay: [], byMonthDay: 1 }
+        }
+        showEditModal.value = true
+      }
+    } else {
+      const master = events.value.find(e => e.id === event._masterId)
+      if (master) {
+        if (!master.exceptions) master.exceptions = {}
+        eventForm.value = { ...master, ...master.exceptions[event.date], id: master.id, date: event.date }
+        editingExceptionDate.value = event.date
+        showEditModal.value = true
+      }
+    }
+  }
+
+  showRecurrenceConfirm.value = false
+  recurrencePending.value = null
+}
+
+const handleDeleteClick = () => {
+  if (editingExceptionDate.value) {
+    const master = events.value.find(e => e.id === eventForm.value.id)
+    if (master) {
+      if (!master.exceptions) master.exceptions = {}
+      master.exceptions[editingExceptionDate.value] = { deleted: true }
+      events.value = [...events.value]
+      saveToStorage()
+    }
+    editingExceptionDate.value = null
+    showEditModal.value = false
+    return
+  }
+  if (eventForm.value.recurrence) {
+    recurrencePending.value = { event: { _masterId: eventForm.value.id, date: eventForm.value.date }, action: 'delete' }
+    showRecurrenceConfirm.value = true
+  } else {
+    deleteEvent()
+  }
+}
+
+const closeEditModal = () => {
+  editingExceptionDate.value = null
   showEditModal.value = false
 }
 
@@ -602,6 +884,17 @@ const onFormCategoryChange = () => {
 const getSubcategoriesForForm = () => {
   const cat = categoriesData.value.find(c => c.id === eventForm.value.categoryId)
   return cat ? cat.subcategories : []
+}
+
+const toggleDayChip = (idx) => {
+  const byDay = recurForm.value.byDay
+  const pos = byDay.indexOf(idx)
+  if (pos === -1) {
+    byDay.push(idx)
+    byDay.sort()
+  } else {
+    byDay.splice(pos, 1)
+  }
 }
 
 // --- CRUD Actions for Categories & Subcategories ---
@@ -915,6 +1208,7 @@ const saveEditSubcategory = (catId) => {
                 >
                   <span class="event-time-badge">{{ ev.timeStart }}</span>
                   <span class="event-title-text">{{ ev.title }}</span>
+                  <span v-if="ev.recurrence || ev._isRecurringInstance" class="recur-icon">⟳</span>
                 </div>
                 
                 <!-- Dynamic dots indicator for mobile screens -->
@@ -954,6 +1248,7 @@ const saveEditSubcategory = (catId) => {
               >
                 <div class="event-card-header" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
                   <span class="event-card-title">{{ ev.title }}</span>
+                  <span v-if="ev.recurrence || ev._isRecurringInstance" class="recur-icon">⟳</span>
                   <div class="category-badges" style="display: flex; gap: 4px; flex-wrap: wrap;">
                     <span class="category-tag-badge" :style="{ backgroundColor: getCategoryColor(ev.categoryId), color: 'white', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }">
                       {{ getCategoryName(ev.categoryId) }}
@@ -1056,6 +1351,7 @@ const saveEditSubcategory = (catId) => {
                 >
                   <div class="event-card-header" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
                     <span class="event-card-title" style="font-size: 15px;">{{ ev.title }}</span>
+                    <span v-if="ev.recurrence || ev._isRecurringInstance" class="recur-icon">⟳</span>
                     <div class="category-badges" style="display: flex; gap: 4px; flex-wrap: wrap;">
                       <span class="category-tag-badge" :style="{ backgroundColor: getCategoryColor(ev.categoryId), color: 'white', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }">
                         {{ getCategoryName(ev.categoryId) }}
@@ -1111,6 +1407,7 @@ const saveEditSubcategory = (catId) => {
                 <!-- Main details -->
                 <div class="list-card-details">
                   <span class="list-card-title">{{ ev.title }}</span>
+                  <span v-if="ev.recurrence || ev._isRecurringInstance" class="recur-icon">⟳</span>
                   <p v-if="ev.description" class="list-card-desc">{{ ev.description }}</p>
                   
                   <div class="list-card-meta" style="display: flex; gap: 4px; align-items: center;">
@@ -1228,8 +1525,67 @@ const saveEditSubcategory = (catId) => {
               </select>
             </div>
           </div>
+
+          <!-- Recurrence -->
+          <div class="form-group">
+            <label class="form-label">Frequência</label>
+            <select v-model="recurForm.freq" class="form-select">
+              <option value="none">Não repete</option>
+              <option value="daily">Diariamente</option>
+              <option value="weekly">Semanalmente</option>
+              <option value="monthly">Mensalmente</option>
+              <option value="yearly">Anualmente</option>
+            </select>
+          </div>
+
+          <template v-if="recurForm.freq !== 'none'">
+            <div class="form-row-2col">
+              <div class="form-group">
+                <label class="form-label">Intervalo</label>
+                <input type="number" min="1" max="99" v-model.number="recurForm.interval" class="form-input" />
+              </div>
+            </div>
+
+            <div v-if="recurForm.freq === 'weekly'" class="form-group">
+              <label class="form-label">Dias da semana</label>
+              <div class="recur-day-chips">
+                <button
+                  type="button"
+                  v-for="(name, idx) in ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb']"
+                  :key="idx"
+                  class="recur-day-chip"
+                  :class="{ active: recurForm.byDay.includes(idx) }"
+                  @click="toggleDayChip(idx)"
+                >{{ name }}</button>
+              </div>
+            </div>
+
+            <div v-if="recurForm.freq === 'monthly'" class="form-group">
+              <label class="form-label">Dia do mês</label>
+              <input type="number" min="1" max="31" v-model.number="recurForm.byMonthDay" class="form-input" style="width: 80px;" />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Encerrar</label>
+              <select v-model="recurForm.endType" class="form-select">
+                <option value="never">Nunca</option>
+                <option value="count">Após X ocorrências</option>
+                <option value="date">Em uma data específica</option>
+              </select>
+            </div>
+
+            <div v-if="recurForm.endType === 'count'" class="form-group">
+              <label class="form-label">Número de ocorrências</label>
+              <input type="number" min="1" max="365" v-model.number="recurForm.endCount" class="form-input" style="width: 100px;" />
+            </div>
+
+            <div v-if="recurForm.endType === 'date'" class="form-group">
+              <label class="form-label">Data de término</label>
+              <input type="date" v-model="recurForm.endDate" class="form-input" />
+            </div>
+          </template>
         </form>
-        
+
         <footer class="modal-footer">
           <button @click="showAddModal = false" class="btn-secondary">Cancelar</button>
           <button @click="saveNewEvent" :disabled="!eventForm.title.trim()" class="btn-primary">
@@ -1244,9 +1600,8 @@ const saveEditSubcategory = (catId) => {
       <div class="modal-content">
         <header class="modal-header">
           <span class="modal-title">Editar Compromisso</span>
-          <button @click="showEditModal = false" class="modal-close-btn">&times;</button>
-        </header>
-        
+          <button @click="closeEditModal" class="modal-close-btn">&times;</button>
+          </header>
         <form @submit.prevent="saveEditedEvent" class="modal-body">
           <!-- Event Title -->
           <div class="form-group">
@@ -1326,15 +1681,100 @@ const saveEditSubcategory = (catId) => {
               </select>
             </div>
           </div>
+
+          <!-- Recurrence -->
+          <div class="form-group">
+            <label class="form-label">Frequência</label>
+            <select v-model="recurForm.freq" class="form-select">
+              <option value="none">Não repete</option>
+              <option value="daily">Diariamente</option>
+              <option value="weekly">Semanalmente</option>
+              <option value="monthly">Mensalmente</option>
+              <option value="yearly">Anualmente</option>
+            </select>
+          </div>
+
+          <template v-if="recurForm.freq !== 'none'">
+            <div class="form-row-2col">
+              <div class="form-group">
+                <label class="form-label">Intervalo</label>
+                <input type="number" min="1" max="99" v-model.number="recurForm.interval" class="form-input" />
+              </div>
+            </div>
+
+            <div v-if="recurForm.freq === 'weekly'" class="form-group">
+              <label class="form-label">Dias da semana</label>
+              <div class="recur-day-chips">
+                <button
+                  type="button"
+                  v-for="(name, idx) in ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb']"
+                  :key="idx"
+                  class="recur-day-chip"
+                  :class="{ active: recurForm.byDay.includes(idx) }"
+                  @click="toggleDayChip(idx)"
+                >{{ name }}</button>
+              </div>
+            </div>
+
+            <div v-if="recurForm.freq === 'monthly'" class="form-group">
+              <label class="form-label">Dia do mês</label>
+              <input type="number" min="1" max="31" v-model.number="recurForm.byMonthDay" class="form-input" style="width: 80px;" />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Encerrar</label>
+              <select v-model="recurForm.endType" class="form-select">
+                <option value="never">Nunca</option>
+                <option value="count">Após X ocorrências</option>
+                <option value="date">Em uma data específica</option>
+              </select>
+            </div>
+
+            <div v-if="recurForm.endType === 'count'" class="form-group">
+              <label class="form-label">Número de ocorrências</label>
+              <input type="number" min="1" max="365" v-model.number="recurForm.endCount" class="form-input" style="width: 100px;" />
+            </div>
+
+            <div v-if="recurForm.endType === 'date'" class="form-group">
+              <label class="form-label">Data de término</label>
+              <input type="date" v-model="recurForm.endDate" class="form-input" />
+            </div>
+          </template>
         </form>
-        
+
         <footer class="modal-footer">
-          <button @click="deleteEvent" class="btn-danger">Excluir</button>
-          <button @click="showEditModal = false" class="btn-secondary">Cancelar</button>
+          <button @click="handleDeleteClick" class="btn-danger">Excluir</button>
+          <button @click="closeEditModal" class="btn-secondary">Cancelar</button>
           <button @click="saveEditedEvent" :disabled="!eventForm.title.trim()" class="btn-primary">
             Atualizar
           </button>
         </footer>
+      </div>
+    </div>
+
+    <!-- MODAL: RECURRENCE CONFIRMATION -->
+    <div v-if="showRecurrenceConfirm" class="modal-overlay">
+      <div class="modal-content" style="max-width: 400px;">
+        <header class="modal-header">
+          <span class="modal-title">Evento Recorrente</span>
+          <button @click="showRecurrenceConfirm = false; recurrencePending = null" class="modal-close-btn">&times;</button>
+        </header>
+        <div class="modal-body" style="padding: 20px 24px;">
+          <p style="margin: 0 0 16px; font-size: 14px; color: var(--text-secondary);">
+            {{ recurrencePending?.action === 'delete' ? 'Excluir' : 'Editar' }} este evento que se repete.
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <button @click="handleRecurrenceConfirm('all')" class="btn-primary" style="width: 100%; justify-content: center;">
+              {{ recurrencePending?.action === 'delete' ? 'Excluir' : 'Editar' }} toda a série
+            </button>
+            <button @click="handleRecurrenceConfirm('this')" class="btn-secondary" style="width: 100%; justify-content: center;">
+              {{ recurrencePending?.action === 'delete' ? 'Excluir' : 'Editar' }} apenas esta ocorrência
+            </button>
+            <button @click="showRecurrenceConfirm = false; recurrencePending = null" class="btn-secondary" style="width: 100%; justify-content: center;">
+              Cancelar
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
