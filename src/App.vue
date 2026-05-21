@@ -1,5 +1,12 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { deleteSeries, deleteOneInstance, editSeries, editOneInstance, moveSeries, moveOneInstance } from './services/recurrence.js'
+import * as dateService from './services/date.js'
+import * as recurService from './services/recurrence.js'
+import * as calService from './services/calendar.js'
+import * as euService from './services/event-utils.js'
+import * as mockService from './services/mock.js'
+import * as ioService from './services/io.js'
 
 // --- State & Config ---
 const views = [
@@ -156,242 +163,46 @@ const recurForm = ref({
 })
 
 // --- Helper Date Formatting (PT-BR) ---
-const formatMonthYear = (date) => {
-  return date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
-    .replace(/^\w/, (c) => c.toUpperCase())
-}
+const formatMonthYear = (date) => dateService.formatMonthYear(date).data
 
-const formatDateShort = (date) => {
-  return date.toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' })
-}
+const formatDateShort = (date) => dateService.formatDateShort(date).data
 
-const formatDateFull = (date) => {
-  return date.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-    .replace(/^\w/, (c) => c.toUpperCase())
-}
+const formatDateFull = (date) => dateService.formatDateFull(date).data
 
-const getWeekDayName = (dayIndex) => {
-  const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
-  return days[dayIndex]
-}
+const getWeekDayName = (dayIndex) => dateService.getWeekDayName(dayIndex).data
 
-const toDateString = (date) => {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
+const toDateString = (date) => dateService.toDateString(date).data
 
-const parseDate = (dateStr) => {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  return new Date(y, m - 1, d)
-}
+const parseDate = (dateStr) => dateService.parseDate(dateStr).data
 
-const getNextRecurDate = (current, r) => {
-  const d = new Date(current)
-  if (r.freq === 'daily') {
-    d.setDate(d.getDate() + r.interval)
-  } else if (r.freq === 'weekly') {
-    if (r.byDay && r.byDay.length > 0) {
-      if (r.byDay.length === 7) {
-        d.setDate(d.getDate() + r.interval)
-        return d
-      }
-      const startWeek = Math.floor(current.getTime() / (7 * 86400000))
-      for (let i = 1; i <= 14; i++) {
-        const test = new Date(current)
-        test.setDate(test.getDate() + i)
-        if (r.byDay.includes(test.getDay())) {
-          const testWeek = Math.floor(test.getTime() / (7 * 86400000))
-          if ((testWeek - startWeek) % r.interval === 0) return test
-        }
-      }
-    }
-    d.setDate(d.getDate() + 7 * r.interval)
-  } else if (r.freq === 'monthly') {
-    d.setMonth(d.getMonth() + r.interval)
-  } else if (r.freq === 'yearly') {
-    d.setFullYear(d.getFullYear() + r.interval)
-  }
-  return d
-}
+const getNextRecurDate = (current, r) => recurService.getNextRecurDate(current, r).data
 
 const expandRecurrences = (event, rangeStart, rangeEnd) => {
-  if (!event.recurrence) return [event]
-
-  const r = event.recurrence
-  const results = []
-  const start = parseDate(event.date)
-  const rangeStartD = parseDate(rangeStart)
-  const rangeEndD = parseDate(rangeEnd)
-
-  const maxFuture = new Date(start)
-  maxFuture.setFullYear(maxFuture.getFullYear() + 1)
-
-  let end = r.until ? parseDate(r.until) : new Date(maxFuture)
-  if (end > maxFuture) end = maxFuture
-  if (end > rangeEndD) end = rangeEndD
-  if (end < start) return []
-
-  let count = 0
-  let current = new Date(start)
-
-  while (current <= end) {
-    const dStr = toDateString(current)
-    count++
-
-    if (dStr >= rangeStart) {
-      const exc = event.exceptions?.[dStr]
-      if (exc?.deleted) {
-        // skip
-      } else {
-        results.push({
-          ...event,
-          ...exc,
-          date: dStr,
-          id: event.id + '_' + dStr.replace(/-/g, ''),
-          _masterId: event.id,
-          _isRecurringInstance: true
-        })
-      }
-    }
-
-    if (r.count && count >= r.count) break
-    if (count > 1000) break
-
-    current = getNextRecurDate(current, r)
-  }
-
-  return results
+  const result = recurService.expandRecurrences(event, rangeStart, rangeEnd)
+  return result.success ? result.data : []
 }
 
 // --- Dynamic Styling & Badge Helpers ---
-const getCategoryColor = (catId) => {
-  const cat = categoriesData.value.find(c => c.id === catId)
-  return cat ? cat.colorCode : '#3b82f6'
-}
+const getCategoryColor = (catId) => euService.getCategoryColor(catId, categoriesData.value).data
 
-const getCategoryName = (catId) => {
-  const cat = categoriesData.value.find(c => c.id === catId)
-  return cat ? cat.name : 'Sem Categoria'
-}
+const getCategoryName = (catId) => euService.getCategoryName(catId, categoriesData.value).data
 
-const getSubcategoryName = (catId, subId) => {
-  const cat = categoriesData.value.find(c => c.id === catId)
-  if (!cat) return 'Sem Subcategoria'
-  const sub = cat.subcategories.find(s => s.id === subId)
-  return sub ? sub.name : 'Outros'
-}
+const getSubcategoryName = (catId, subId) => euService.getSubcategoryName(catId, subId, categoriesData.value).data
 
 const getEventStyle = (catId) => {
-  const color = getCategoryColor(catId)
-  const isDark = isDarkMode.value
-  return {
-    backgroundColor: isDark ? `${color}25` : `${color}12`,
-    border: `1px solid ${isDark ? `${color}40` : `${color}25`}`,
-    borderLeft: `3px solid ${color}`,
-    color: color
-  }
+  const result = euService.getEventStyle(catId, categoriesData.value, isDarkMode.value)
+  return result.success ? result.data : {}
 }
 
 const getEventCardStyle = (catId) => {
-  const color = getCategoryColor(catId)
-  return {
-    borderLeft: `4px solid ${color}`
-  }
+  const result = euService.getEventCardStyle(catId, categoriesData.value)
+  return result.success ? result.data : {}
 }
 
 // --- Initialize Mock Data dynamically relative to "Today" ---
 const generateMockEvents = () => {
-  const today = new Date()
-  const relativeDate = (offsetDays) => {
-    const d = new Date(today)
-    d.setDate(today.getDate() + offsetDays)
-    return toDateString(d)
-  }
-
-  return [
-    {
-      id: 1,
-      title: 'Revisão do MVP do Calendário',
-      description: 'Apresentação das principais visualizações (mês, semana, dia) e filtros de categorias.',
-      date: relativeDate(0),
-      timeStart: '10:00',
-      timeEnd: '11:30',
-      categoryId: 'trabalho',
-      subcategoryId: 'projeto'
-    },
-    {
-      id: 2,
-      title: 'Reunião de Alinhamento Semanal',
-      description: 'Alinhamento rápido de metas semanais com a equipe e divisão de tarefas.',
-      date: relativeDate(0),
-      timeStart: '14:00',
-      timeEnd: '15:00',
-      categoryId: 'trabalho',
-      subcategoryId: 'reuniao'
-    },
-    {
-      id: 3,
-      title: 'Consulta de Rotina - Dentista',
-      description: 'Checkup anual na clínica OdontoClean.',
-      date: relativeDate(1),
-      timeStart: '09:00',
-      timeEnd: '10:00',
-      categoryId: 'pessoal',
-      subcategoryId: 'saude'
-    },
-    {
-      id: 4,
-      title: 'Entrega do Relatório Financeiro',
-      description: 'Enviar o fechamento do caixa e relatórios consolidados para a diretoria.',
-      date: relativeDate(3),
-      timeStart: '08:00',
-      timeEnd: '09:30',
-      categoryId: 'trabalho',
-      subcategoryId: 'projeto'
-    },
-    {
-      id: 5,
-      title: 'Sessão de Yoga e Alongamento',
-      description: 'Foco em meditação e postura corporal para recarregar as energias.',
-      date: relativeDate(-2),
-      timeStart: '17:30',
-      timeEnd: '18:30',
-      categoryId: 'pessoal',
-      subcategoryId: 'lazer'
-    },
-    {
-      id: 6,
-      title: 'Jantar de Comemoração',
-      description: 'Jantar especial com a família.',
-      date: relativeDate(5),
-      timeStart: '20:00',
-      timeEnd: '23:00',
-      categoryId: 'pessoal',
-      subcategoryId: 'lazer'
-    },
-    {
-      id: 7,
-      title: 'Mentoria Técnica de Programação',
-      description: 'Dar suporte com dúvidas de arquitetura Vue e estilização responsiva.',
-      date: relativeDate(2),
-      timeStart: '14:00',
-      timeEnd: '15:30',
-      categoryId: 'trabalho',
-      subcategoryId: 'desenvolvimento'
-    },
-    {
-      id: 8,
-      title: 'Planejamento de Finanças Pessoais',
-      description: 'Ajustar planilha de gastos mensais e investimentos.',
-      date: relativeDate(-1),
-      timeStart: '21:00',
-      timeEnd: '22:00',
-      categoryId: 'pessoal',
-      subcategoryId: 'financas'
-    }
-  ]
+  const result = mockService.generateMockEvents()
+  return result.success ? result.data : []
 }
 
 // --- Lifecycle & Persistence ---
@@ -407,9 +218,9 @@ onMounted(() => {
   }
 
   // Load Categories
-  const savedCategories = localStorage.getItem('sincronia_categories')
-  if (savedCategories) {
-    categoriesData.value = JSON.parse(savedCategories)
+  const savedResult = ioService.loadFromStorage('sincronia_categories', localStorage)
+  if (savedResult.success && savedResult.data) {
+    categoriesData.value = savedResult.data
   } else {
     saveCategoriesToStorage()
   }
@@ -418,9 +229,9 @@ onMounted(() => {
   initializeFilters()
 
   // Load Events from LocalStorage or generate Mock Events
-  const savedEvents = localStorage.getItem('sincronia_events')
-  if (savedEvents) {
-    events.value = JSON.parse(savedEvents)
+  const savedEventsResult = ioService.loadFromStorage('sincronia_events', localStorage)
+  if (savedEventsResult.success && savedEventsResult.data) {
+    events.value = savedEventsResult.data
   } else {
     events.value = generateMockEvents()
     saveToStorage()
@@ -433,21 +244,17 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
 
   // Notification permission + reminder interval
-  try {
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission()
-    }
-  } catch (_) { /* ignore */ }
+  ioService.requestNotificationPermission(Notification)
   reminderInterval = setInterval(checkReminders, 30000)
   checkReminders()
 })
 
 const saveToStorage = () => {
-  localStorage.setItem('sincronia_events', JSON.stringify(events.value))
+  ioService.saveToStorage('sincronia_events', events.value, localStorage)
 }
 
 const saveCategoriesToStorage = () => {
-  localStorage.setItem('sincronia_categories', JSON.stringify(categoriesData.value))
+  ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
 }
 
 const toggleTheme = () => {
@@ -463,96 +270,65 @@ const toggleTheme = () => {
 
 // --- Infinite Scroll ---
 const buildMonthData = (year, month) => {
-  const firstDay = new Date(year, month, 1)
-  const startDay = firstDay.getDay()
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const today = new Date()
-  const todayStr = toDateString(today)
-  const cells = []
-  const prevMonthDays = new Date(year, month, 0).getDate()
-  for (let i = 0; i < 42; i++) {
-    let cellDay, cellMonth, cellYear, isCurrentMonth
-    if (i < startDay) {
-      const d = prevMonthDays - startDay + 1 + i
-      cellDay = d
-      cellMonth = month === 0 ? 11 : month - 1
-      cellYear = month === 0 ? year - 1 : year
-      isCurrentMonth = false
-    } else if (i >= startDay + daysInMonth) {
-      const d = i - startDay - daysInMonth + 1
-      cellDay = d
-      cellMonth = month === 11 ? 0 : month + 1
-      cellYear = month === 11 ? year + 1 : year
-      isCurrentMonth = false
-    } else {
-      cellDay = i - startDay + 1
-      cellMonth = month
-      cellYear = year
-      isCurrentMonth = true
-    }
-    const dateObj = new Date(cellYear, cellMonth, cellDay)
-    const dateStr = toDateString(dateObj)
-    cells.push({
-      dateString: dateStr,
-      date: dateObj,
-      isCurrentMonth,
-      isToday: dateStr === todayStr,
-      dayNumber: cellDay
-    })
-  }
-  return { year, month, cells }
+  const result = calService.buildMonthCells(year, month)
+  return result.success ? result.data : { year, month, cells: [] }
 }
 
 const initInfiniteScroll = () => {
-  const now = new Date()
-  const currentYear = now.getFullYear()
-  const currentMonth = now.getMonth()
-  monthsData.value = [
-    buildMonthData(currentYear, currentMonth - 1),
-    buildMonthData(currentYear, currentMonth),
-    buildMonthData(currentYear, currentMonth + 1)
-  ]
-  activeMonthIdx.value = 1
+  const result = calService.initInfiniteScrollData()
+  if (result.success) {
+    monthsData.value = result.data.months
+    activeMonthIdx.value = result.data.activeIdx
+  }
 }
 
 // --- Navigation Operations ---
+const navigateMonthView = (offset) => {
+  const targetIdx = activeMonthIdx.value + offset
+  if (targetIdx >= 0 && targetIdx < monthsData.value.length) {
+    activeMonthIdx.value = targetIdx
+    const m = monthsData.value[targetIdx]
+    currentDate.value = new Date(m.year, m.month, 1)
+  } else if (targetIdx >= monthsData.value.length) {
+    const last = monthsData.value[monthsData.value.length - 1]
+    const nextM = last.month === 11 ? { year: last.year + 1, month: 0 } : { year: last.year, month: last.month + 1 }
+    monthsData.value.push(buildMonthData(nextM.year, nextM.month))
+    activeMonthIdx.value = monthsData.value.length - 1
+    currentDate.value = new Date(nextM.year, nextM.month, 1)
+  } else {
+    const first = monthsData.value[0]
+    const prevM = first.month === 0 ? { year: first.year - 1, month: 11 } : { year: first.year, month: first.month - 1 }
+    monthsData.value.unshift(buildMonthData(prevM.year, prevM.month))
+    activeMonthIdx.value = 0
+    currentDate.value = new Date(prevM.year, prevM.month, 1)
+  }
+}
+
+const navigateWeekView = (offset) => {
+  const d = new Date(currentDate.value)
+  d.setDate(d.getDate() + (offset * 7))
+  currentDate.value = d
+}
+
+const navigateDayView = (offset) => {
+  const d = new Date(currentDate.value)
+  d.setDate(d.getDate() + offset)
+  currentDate.value = d
+  selectedDate.value = d
+}
+
+const navigateListView = (offset) => {
+  const d = new Date(currentDate.value)
+  d.setMonth(d.getMonth() + offset)
+  currentDate.value = d
+}
+
 const navigatePeriod = (direction) => {
   const offset = direction === 'next' ? 1 : -1
-
-  if (view.value === 'month') {
-    const targetIdx = activeMonthIdx.value + offset
-    if (targetIdx >= 0 && targetIdx < monthsData.value.length) {
-      activeMonthIdx.value = targetIdx
-      const m = monthsData.value[targetIdx]
-      currentDate.value = new Date(m.year, m.month, 1)
-    } else if (targetIdx >= monthsData.value.length) {
-      const last = monthsData.value[monthsData.value.length - 1]
-      const nextM = last.month === 11 ? { year: last.year + 1, month: 0 } : { year: last.year, month: last.month + 1 }
-      monthsData.value.push(buildMonthData(nextM.year, nextM.month))
-      activeMonthIdx.value = monthsData.value.length - 1
-      currentDate.value = new Date(nextM.year, nextM.month, 1)
-    } else {
-      const first = monthsData.value[0]
-      const prevM = first.month === 0 ? { year: first.year - 1, month: 11 } : { year: first.year, month: first.month - 1 }
-      monthsData.value.unshift(buildMonthData(prevM.year, prevM.month))
-      activeMonthIdx.value = 0
-      currentDate.value = new Date(prevM.year, prevM.month, 1)
-    }
-  } else if (view.value === 'week') {
-    const d = new Date(currentDate.value)
-    d.setDate(d.getDate() + (offset * 7))
-    currentDate.value = d
-  } else if (view.value === 'day') {
-    const d = new Date(currentDate.value)
-    d.setDate(d.getDate() + offset)
-    currentDate.value = d
-    selectedDate.value = d
-  } else {
-    // List/Agenda view just shifts month
-    const d = new Date(currentDate.value)
-    d.setMonth(d.getMonth() + offset)
-    currentDate.value = d
-  }
+  if (view.value === 'month') navigateMonthView(offset)
+  else if (view.value === 'week') navigateWeekView(offset)
+  else if (view.value === 'day') navigateDayView(offset)
+  else navigateListView(offset)
 }
 
 const navigateToday = () => {
@@ -569,155 +345,34 @@ const monthDays = computed(() => {
 })
 
 const weekDays = computed(() => {
-  const current = new Date(currentDate.value)
-  const currentDayOfWeek = current.getDay()
-  
-  const sunday = new Date(current)
-  sunday.setDate(current.getDate() - currentDayOfWeek)
-  
-  const days = []
-  const tempDate = new Date(sunday)
-  
-  for (let i = 0; i < 7; i++) {
-    const dStr = toDateString(tempDate)
-    const isToday = dStr === toDateString(new Date())
-    
-    days.push({
-      date: new Date(tempDate),
-      dayNumber: tempDate.getDate(),
-      dayName: getWeekDayName(i),
-      isToday,
-      dateString: dStr
-    })
-    tempDate.setDate(tempDate.getDate() + 1)
-  }
-  
-  return days
+  const result = calService.buildWeekDays(currentDate.value)
+  return result.success ? result.data : []
 })
 
 const miniCalendarDays = computed(() => {
-  const year = currentDate.value.getFullYear()
-  const month = currentDate.value.getMonth()
-  
-  const firstDay = new Date(year, month, 1)
-  const startDayOfWeek = firstDay.getDay()
-  
-  const startDate = new Date(firstDay)
-  startDate.setDate(firstDay.getDate() - startDayOfWeek)
-  
-  const cells = []
-  const tempDate = new Date(startDate)
-  
-  for (let i = 0; i < 35; i++) {
-    const dStr = toDateString(tempDate)
-    cells.push({
-      date: new Date(tempDate),
-      dayNumber: tempDate.getDate(),
-      isCurrentMonth: tempDate.getMonth() === month,
-      dateString: dStr
-    })
-    tempDate.setDate(tempDate.getDate() + 1)
-  }
-  
-  return cells
+  const result = calService.buildMiniCalendarDays(currentDate.value)
+  return result.success ? result.data : []
 })
 
 // --- Filtering Core logic ---
 const filteredEvents = computed(() => {
-  return events.value.filter(e => {
-    // Category filter
-    if (activeCategoryFilters.value[e.categoryId] === false) return false
-    
-    // Subcategory filter
-    if (activeSubcategoryFilters.value[e.subcategoryId] === false) return false
-    
-    // Search query
-    if (searchQuery.value.trim() !== '') {
-      const q = searchQuery.value.toLowerCase()
-      const titleMatch = e.title.toLowerCase().includes(q)
-      const descMatch = e.description ? e.description.toLowerCase().includes(q) : false
-      
-      const cat = categoriesData.value.find(c => c.id === e.categoryId)
-      const catMatch = cat ? cat.name.toLowerCase().includes(q) : false
-      
-      let subMatch = false
-      if (cat) {
-        const sub = cat.subcategories.find(s => s.id === e.subcategoryId)
-        subMatch = sub ? sub.name.toLowerCase().includes(q) : false
-      }
-      
-      if (!titleMatch && !descMatch && !catMatch && !subMatch) return false
-    }
-    
-    return true
-  }).sort((a, b) => {
-    if (a.date !== b.date) return a.date.localeCompare(b.date)
-    return a.timeStart.localeCompare(b.timeStart)
-  })
+  const result = euService.filterEvents(events.value, activeCategoryFilters.value, activeSubcategoryFilters.value, searchQuery.value, categoriesData.value)
+  return result.success ? result.data : []
 })
 
 const groupedEvents = computed(() => {
-  const groups = {}
-  const today = new Date()
-  const year = currentDate.value.getFullYear()
-  const month = currentDate.value.getMonth()
-  const firstOfMonth = new Date(year, month, 1)
-  const firstOfNext = new Date(year, month + 1, 1)
-  const rangeStart = toDateString(firstOfMonth)
-  const rangeEnd = toDateString(new Date(firstOfNext.getTime() - 1))
-
-  filteredEvents.value.forEach(e => {
-    const expanded = expandRecurrences(e, rangeStart, rangeEnd)
-    expanded.forEach(inst => {
-      if (!groups[inst.date]) {
-        groups[inst.date] = []
-      }
-      groups[inst.date].push(inst)
-    })
-  })
-
-  const sortedDates = Object.keys(groups).sort()
-  const result = []
-
-  sortedDates.forEach(dateStr => {
-    groups[dateStr].sort((a, b) => a.timeStart.localeCompare(b.timeStart))
-    const d = new Date(dateStr + 'T00:00:00')
-    result.push({
-      dateString: dateStr,
-      dateFormatted: formatDateFull(d),
-      events: groups[dateStr]
-    })
-  })
-
-  return result
+  const result = euService.groupEvents(filteredEvents.value, currentDate.value)
+  return result.success ? result.data : []
 })
 
 const getEventsForDate = (dateStr) => {
-  const result = []
-  filteredEvents.value.forEach(e => {
-    const expanded = expandRecurrences(e, dateStr, dateStr)
-    expanded.forEach(inst => {
-      if (inst.date === dateStr) result.push(inst)
-    })
-  })
-  return result.sort((a, b) => a.timeStart.localeCompare(b.timeStart))
+  const result = euService.getEventsForDate(dateStr, filteredEvents.value)
+  return result.success ? result.data : []
 }
 
 const hasEventsOnDate = (dateStr) => {
-  return events.value.some(e => {
-    if (!activeCategoryFilters.value[e.categoryId]) return false
-    if (!activeSubcategoryFilters.value[e.subcategoryId]) return false
-    if (e.date === dateStr) {
-      const exc = e.exceptions?.[dateStr]
-      if (exc?.deleted) return false
-      return true
-    }
-    if (e.recurrence) {
-      const expanded = expandRecurrences(e, dateStr, dateStr)
-      return expanded.some(inst => inst.date === dateStr)
-    }
-    return false
-  })
+  const result = euService.hasEventsOnDate(dateStr, events.value, activeCategoryFilters.value, activeSubcategoryFilters.value)
+  return result.success ? result.data : false
 }
 
 // --- CRUD Actions for Events ---
@@ -797,23 +452,8 @@ const openEditEventModal = (event, e) => {
 }
 
 const buildRecurrence = () => {
-  if (recurForm.value.freq === 'none') return null
-  const r = {
-    freq: recurForm.value.freq,
-    interval: recurForm.value.interval || 1
-  }
-  if (recurForm.value.freq === 'weekly' && recurForm.value.byDay.length > 0) {
-    r.byDay = [...recurForm.value.byDay]
-  }
-  if (recurForm.value.freq === 'monthly') {
-    r.byMonthDay = recurForm.value.byMonthDay || 1
-  }
-  if (recurForm.value.endType === 'count') {
-    r.count = recurForm.value.endCount || 10
-  } else if (recurForm.value.endType === 'date') {
-    r.until = recurForm.value.endDate
-  }
-  return r
+  const result = recurService.buildRecurrence(recurForm.value)
+  return result.success ? result.data : null
 }
 
 const saveNewEvent = () => {
@@ -880,73 +520,35 @@ const handleRecurrenceConfirm = (choice) => {
   const { event, action } = recurrencePending.value
 
   if (action === 'delete') {
-    if (choice === 'all') {
-      events.value = events.value.filter(e => e.id === event._masterId ? false : true)
-      addToast('Série de compromissos excluída', 'success')
-    } else {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        if (!master.exceptions) master.exceptions = {}
-        master.exceptions[event.date] = { deleted: true }
-        events.value = [...events.value]
-        addToast('Ocorrência excluída', 'success')
-      }
-    }
+    const result = choice === 'all'
+      ? deleteSeries(event._masterId, events.value)
+      : deleteOneInstance(event._masterId, event.date, events.value)
+    if (!result.success) { addToast(result.error, 'error'); return }
+    events.value = result.data
     saveToStorage()
+    addToast(choice === 'all' ? 'Série de compromissos excluída' : 'Ocorrência excluída', 'success')
     showEditModal.value = false
   } else if (action === 'edit') {
     if (choice === 'all') {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        eventForm.value = { ...master, reminder: master.reminder || { enabled: false, minutesBefore: 15 }, recurrence: master.recurrence ? { ...master.recurrence } : null }
-        if (master.recurrence) {
-          const r = master.recurrence
-          recurForm.value = {
-            freq: r.freq,
-            interval: r.interval,
-            endType: r.until ? 'date' : (r.count ? 'count' : 'never'),
-            endCount: r.count || 10,
-            endDate: r.until || '',
-            byDay: r.byDay || [],
-            byMonthDay: r.byMonthDay || 1
-          }
-        } else {
-          recurForm.value = { freq: 'none', interval: 1, endType: 'never', endCount: 10, endDate: '', byDay: [], byMonthDay: 1 }
-        }
-        showEditModal.value = true
-      }
+      const seriesResult = editSeries(event._masterId, null, events.value)
+      if (!seriesResult.success) { addToast(seriesResult.error, 'error'); return }
+      eventForm.value = seriesResult.data.formData
+      recurForm.value = seriesResult.data.recurForm
     } else {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        if (!master.exceptions) master.exceptions = {}
-        eventForm.value = { ...master, ...master.exceptions[event.date], reminder: master.reminder || { enabled: false, minutesBefore: 15 }, id: master.id, date: event.date }
-        editingExceptionDate.value = event.date
-        showEditModal.value = true
-      }
+      const instResult = editOneInstance(event._masterId, event.date, events.value)
+      if (!instResult.success) { addToast(instResult.error, 'error'); return }
+      eventForm.value = instResult.data.formData
+      editingExceptionDate.value = instResult.data.editingDate
     }
+    showEditModal.value = true
   } else if (action === 'move') {
-    const targetDate = event.proposedDate
-    if (choice === 'all') {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        master.date = targetDate
-        master.exceptions = {}
-        events.value = [...events.value]
-        saveToStorage()
-        addToast('Série movida para ' + targetDate, 'success')
-      }
-    } else {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        if (!master.exceptions) master.exceptions = {}
-        master.exceptions[event.date] = { deleted: true }
-        const newId = Date.now()
-        events.value.push({ ...master, id: newId, date: targetDate, recurrence: null, exceptions: {} })
-        events.value = [...events.value]
-        saveToStorage()
-        addToast('Ocorrência movida para ' + targetDate, 'success')
-      }
-    }
+    const result = choice === 'all'
+      ? moveSeries(event._masterId, event.proposedDate, events.value)
+      : moveOneInstance(event._masterId, event.date, event.proposedDate, events.value)
+    if (!result.success) { addToast(result.error, 'error'); return }
+    events.value = result.data
+    saveToStorage()
+    addToast('Compromisso movido para ' + event.proposedDate, 'success')
   }
 
   showRecurrenceConfirm.value = false
@@ -1006,13 +608,9 @@ const getSubcategoriesForForm = () => {
 }
 
 const toggleDayChip = (idx) => {
-  const byDay = recurForm.value.byDay
-  const pos = byDay.indexOf(idx)
-  if (pos === -1) {
-    byDay.push(idx)
-    byDay.sort()
-  } else {
-    byDay.splice(pos, 1)
+  const result = euService.toggleDayChip(recurForm.value.byDay, idx)
+  if (result.success) {
+    recurForm.value.byDay = result.data
   }
 }
 
@@ -1175,18 +773,8 @@ const undoableDelete = (event) => {
 
 // --- Conflict Detection ---
 const detectConflict = (dateStr, timeStart, timeEnd, excludeId = null) => {
-  const conflicts = []
-  events.value.forEach(e => {
-    const expanded = expandRecurrences(e, dateStr, dateStr)
-    expanded.forEach(inst => {
-      if (inst.date !== dateStr) return
-      if (excludeId && (inst.id === excludeId || inst._masterId === excludeId)) return
-      if (inst.timeStart < timeEnd && inst.timeEnd > timeStart) {
-        conflicts.push(inst)
-      }
-    })
-  })
-  return conflicts
+  const result = euService.detectConflicts(dateStr, timeStart, timeEnd, excludeId, events.value)
+  return result.success ? result.data : []
 }
 const checkConflictsBeforeSave = (callback) => {
   const conflicts = detectConflict(
@@ -1255,44 +843,43 @@ const onDrop = (cell, e) => {
 }
 
 // --- Resize Events ---
+const onResizeMouseMove = (me) => {
+  if (!resizingEvent.value) return
+  const deltaY = me.clientY - resizeStartY.value
+  const result = ioService.computeResizeEnd(resizeStartEnd.value, deltaY)
+  if (result.success) {
+    resizingEvent.value._resizeEnd = result.data
+  }
+}
+
+const onResizeMouseUp = () => {
+  if (resizingEvent.value && resizingEvent.value._resizeEnd) {
+    const master = events.value.find(e => e.id === (resizingEvent.value._masterId || resizingEvent.value.id))
+    if (master) {
+      if (resizingEvent.value._isRecurringInstance) {
+        if (!master.exceptions) master.exceptions = {}
+        master.exceptions[resizingEvent.value.date] = { ...(master.exceptions[resizingEvent.value.date] || {}), timeEnd: resizingEvent.value._resizeEnd }
+      } else {
+        master.timeEnd = resizingEvent.value._resizeEnd
+      }
+      events.value = [...events.value]
+      saveToStorage()
+      addToast('Horário ajustado', 'info', 2000)
+    }
+  }
+  resizingEvent.value = null
+  window.removeEventListener('mousemove', onResizeMouseMove)
+  window.removeEventListener('mouseup', onResizeMouseUp)
+}
+
 const startResize = (event, e) => {
   e.preventDefault()
   e.stopPropagation()
   resizingEvent.value = event
   resizeStartY.value = e.clientY
   resizeStartEnd.value = event.timeEnd
-  const onMouseMove = (me) => {
-    if (!resizingEvent.value) return
-    const deltaY = me.clientY - resizeStartY.value
-    const deltaMinutes = Math.round(deltaY / 0.8)
-    const [h, m] = resizeStartEnd.value.split(':').map(Number)
-    const totalMinutes = h * 60 + m + deltaMinutes
-    const clamped = Math.max(totalMinutes, 1)
-    const newH = Math.floor(clamped / 60) % 24
-    const newM = clamped % 60
-    resizingEvent.value._resizeEnd = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
-  }
-  const onMouseUp = () => {
-    if (resizingEvent.value && resizingEvent.value._resizeEnd) {
-      const master = events.value.find(e => e.id === (resizingEvent.value._masterId || resizingEvent.value.id))
-      if (master) {
-        if (resizingEvent.value._isRecurringInstance) {
-          if (!master.exceptions) master.exceptions = {}
-          master.exceptions[resizingEvent.value.date] = { ...(master.exceptions[resizingEvent.value.date] || {}), timeEnd: resizingEvent.value._resizeEnd }
-        } else {
-          master.timeEnd = resizingEvent.value._resizeEnd
-        }
-        events.value = [...events.value]
-        saveToStorage()
-        addToast('Horário ajustado', 'info', 2000)
-      }
-    }
-    resizingEvent.value = null
-    window.removeEventListener('mousemove', onMouseMove)
-    window.removeEventListener('mouseup', onMouseUp)
-  }
-  window.addEventListener('mousemove', onMouseMove)
-  window.addEventListener('mouseup', onMouseUp)
+  window.addEventListener('mousemove', onResizeMouseMove)
+  window.addEventListener('mouseup', onResizeMouseUp)
 }
 
 // --- Keyboard Shortcuts ---
@@ -1330,21 +917,11 @@ const checkReminders = () => {
   const today = toDateString(new Date())
   const now = new Date()
   const currentMinutes = now.getHours() * 60 + now.getMinutes()
-  events.value.forEach(e => {
-    if (e.date !== today || !e.reminder?.enabled) return
-    if (e.reminder.fired) return
-    const [h, m] = e.timeStart.split(':').map(Number)
-    const eventMinutes = h * 60 + m
-    const reminderTime = eventMinutes - (e.reminder.minutesBefore || 15)
-    if (currentMinutes >= reminderTime && currentMinutes < eventMinutes) {
-      e.reminder.fired = true
-      try {
-        new Notification(e.title, {
-          body: `${e.timeStart} — ${e.description || 'Sem descrição'}`,
-          tag: 'sincronia-reminder-' + e.id
-        })
-      } catch (_) { /* ignore */ }
-    }
+  const dueResult = euService.getEventsDueForReminder(events.value, today, currentMinutes)
+  if (!dueResult.success) return
+  dueResult.data.forEach(e => {
+    e.reminder.fired = true
+    ioService.fireNotification(e.title, `${e.timeStart} — ${e.description || 'Sem descrição'}`, 'sincronia-reminder-' + e.id, Notification)
   })
 }
 
@@ -1360,27 +937,19 @@ const exportData = async (format) => {
     Subcategoria: getSubcategoryName(e.categoryId, e.subcategoryId),
     Repete: e.recurrence ? e.recurrence.freq : ''
   }))
+  const filename = `sincronia-eventos-${toDateString(new Date())}`
   if (format === 'csv') {
-    const header = Object.keys(data[0] || {}).join(',')
-    const rows = data.map(row => Object.values(row).map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
-    const csv = [header, ...rows].join('\n')
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = `sincronia-eventos-${toDateString(new Date())}.csv`
-    a.click(); URL.revokeObjectURL(url)
+    const csvResult = ioService.generateCSV(data)
+    if (!csvResult.success) { addToast(csvResult.error, 'error'); return }
+    ioService.downloadBlob(csvResult.data, filename + '.csv', document, URL, Blob)
     addToast('Exportado como CSV com sucesso', 'success')
     return
   }
   try {
     const XLSX = await import('xlsx')
-    const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.json_to_sheet(data)
-    XLSX.utils.book_append_sheet(wb, ws, 'Eventos')
-    const catSheet = categoriesData.value.map(c => ({ Categoria: c.name, Cor: c.colorCode, Subcategorias: c.subcategories.map(s => s.name).join(', ') }))
-    const ws2 = XLSX.utils.json_to_sheet(catSheet)
-    XLSX.utils.book_append_sheet(wb, ws2, 'Categorias')
-    XLSX.writeFile(wb, `sincronia-eventos-${toDateString(new Date())}.xlsx`)
+    const wbResult = ioService.generateXLSX(data, categoriesData.value, XLSX)
+    if (!wbResult.success) { addToast(wbResult.error, 'error'); return }
+    ioService.downloadXLSX(wbResult.data, filename + '.xlsx', XLSX)
     addToast('Exportado como XLSX com sucesso', 'success')
   } catch (_) {
     addToast('XLSX não disponível. Use CSV.', 'error')
@@ -1393,33 +962,11 @@ const handleImportFile = (e) => {
   const reader = new FileReader()
   reader.onload = (evt) => {
     const text = evt.target.result
-    const lines = text.split('\n').filter(l => l.trim())
-    if (lines.length < 2) { addToast('Arquivo vazio ou inválido', 'error'); return }
-    const headers = lines[0].split(',').map(h => h.replace(/^"+|"+$/g, '').trim())
-    const imported = []
-    for (let i = 1; i < lines.length; i++) {
-      const vals = lines[i].split(',').map(v => v.replace(/^"+|"+$/g, '').trim())
-      const obj = {}
-      headers.forEach((h, idx) => { obj[h] = vals[idx] || '' })
-      if (obj.Titulo && obj.Data) {
-        imported.push({
-          id: Date.now() + i,
-          title: obj.Titulo,
-          description: obj.Descricao || '',
-          date: obj.Data,
-          timeStart: obj.Inicio || '09:00',
-          timeEnd: obj.Fim || '10:00',
-          categoryId: 'trabalho',
-          subcategoryId: 'reuniao',
-          recurrence: null,
-          exceptions: {}
-        })
-      }
-    }
-    if (imported.length === 0) { addToast('Nenhum evento válido encontrado', 'error'); return }
-    events.value = [...events.value, ...imported]
+    const parseResult = ioService.parseCSV(text)
+    if (!parseResult.success) { addToast(parseResult.error, 'error'); return }
+    events.value = [...events.value, ...parseResult.data]
     saveToStorage()
-    addToast(`${imported.length} evento(s) importado(s) com sucesso`, 'success')
+    addToast(`${parseResult.data.length} evento(s) importado(s) com sucesso`, 'success')
   }
   reader.readAsText(file)
   e.target.value = ''
