@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 // --- State & Config ---
 const views = [
@@ -100,6 +100,23 @@ const editingCategoryName = ref('')
 
 const editingSubcategoryId = ref(null)
 const editingSubcategoryName = ref('')
+const importFileInput = ref(null)
+const showSeriesModal = ref(false)
+const seriesEvent = ref(null)
+const seriesInstances = ref([])
+
+// --- Drag & Drop State ---
+const draggedEvent = ref(null)
+const dragOverDate = ref(null)
+
+// --- Resize State ---
+const resizingEvent = ref(null)
+const resizeStartY = ref(0)
+const resizeStartEnd = ref('')
+
+// --- Infinite Scroll State ---
+const monthsData = ref([])
+const activeMonthIdx = ref(0)
 
 const colorPalette = [
   '#10b981', // Emerald
@@ -123,7 +140,8 @@ const eventForm = ref({
   categoryId: 'trabalho',
   subcategoryId: 'reuniao',
   recurrence: null,
-  exceptions: {}
+  exceptions: {},
+  reminder: { enabled: false, minutesBefore: 15 }
 })
 
 const editingExceptionDate = ref(null)
@@ -407,6 +425,21 @@ onMounted(() => {
     events.value = generateMockEvents()
     saveToStorage()
   }
+
+  // Initialize infinite scroll months
+  initInfiniteScroll()
+
+  // Keyboard shortcuts listener
+  window.addEventListener('keydown', handleKeydown)
+
+  // Notification permission + reminder interval
+  try {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+  } catch (_) { /* ignore */ }
+  reminderInterval = setInterval(checkReminders, 30000)
+  checkReminders()
 })
 
 const saveToStorage = () => {
@@ -428,14 +461,83 @@ const toggleTheme = () => {
   }
 }
 
+// --- Infinite Scroll ---
+const buildMonthData = (year, month) => {
+  const firstDay = new Date(year, month, 1)
+  const startDay = firstDay.getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const today = new Date()
+  const todayStr = toDateString(today)
+  const cells = []
+  const prevMonthDays = new Date(year, month, 0).getDate()
+  for (let i = 0; i < 42; i++) {
+    let cellDay, cellMonth, cellYear, isCurrentMonth
+    if (i < startDay) {
+      const d = prevMonthDays - startDay + 1 + i
+      cellDay = d
+      cellMonth = month === 0 ? 11 : month - 1
+      cellYear = month === 0 ? year - 1 : year
+      isCurrentMonth = false
+    } else if (i >= startDay + daysInMonth) {
+      const d = i - startDay - daysInMonth + 1
+      cellDay = d
+      cellMonth = month === 11 ? 0 : month + 1
+      cellYear = month === 11 ? year + 1 : year
+      isCurrentMonth = false
+    } else {
+      cellDay = i - startDay + 1
+      cellMonth = month
+      cellYear = year
+      isCurrentMonth = true
+    }
+    const dateObj = new Date(cellYear, cellMonth, cellDay)
+    const dateStr = toDateString(dateObj)
+    cells.push({
+      dateString: dateStr,
+      date: dateObj,
+      isCurrentMonth,
+      isToday: dateStr === todayStr,
+      dayNumber: cellDay
+    })
+  }
+  return { year, month, cells }
+}
+
+const initInfiniteScroll = () => {
+  const now = new Date()
+  const currentYear = now.getFullYear()
+  const currentMonth = now.getMonth()
+  monthsData.value = [
+    buildMonthData(currentYear, currentMonth - 1),
+    buildMonthData(currentYear, currentMonth),
+    buildMonthData(currentYear, currentMonth + 1)
+  ]
+  activeMonthIdx.value = 1
+}
+
 // --- Navigation Operations ---
 const navigatePeriod = (direction) => {
   const offset = direction === 'next' ? 1 : -1
-  
+
   if (view.value === 'month') {
-    const d = new Date(currentDate.value)
-    d.setMonth(d.getMonth() + offset)
-    currentDate.value = d
+    const targetIdx = activeMonthIdx.value + offset
+    if (targetIdx >= 0 && targetIdx < monthsData.value.length) {
+      activeMonthIdx.value = targetIdx
+      const m = monthsData.value[targetIdx]
+      currentDate.value = new Date(m.year, m.month, 1)
+    } else if (targetIdx >= monthsData.value.length) {
+      const last = monthsData.value[monthsData.value.length - 1]
+      const nextM = last.month === 11 ? { year: last.year + 1, month: 0 } : { year: last.year, month: last.month + 1 }
+      monthsData.value.push(buildMonthData(nextM.year, nextM.month))
+      activeMonthIdx.value = monthsData.value.length - 1
+      currentDate.value = new Date(nextM.year, nextM.month, 1)
+    } else {
+      const first = monthsData.value[0]
+      const prevM = first.month === 0 ? { year: first.year - 1, month: 11 } : { year: first.year, month: first.month - 1 }
+      monthsData.value.unshift(buildMonthData(prevM.year, prevM.month))
+      activeMonthIdx.value = 0
+      currentDate.value = new Date(prevM.year, prevM.month, 1)
+    }
   } else if (view.value === 'week') {
     const d = new Date(currentDate.value)
     d.setDate(d.getDate() + (offset * 7))
@@ -456,37 +558,14 @@ const navigatePeriod = (direction) => {
 const navigateToday = () => {
   currentDate.value = new Date()
   selectedDate.value = new Date()
+  initInfiniteScroll()
 }
 
 // --- Grid Calculators ---
 const monthDays = computed(() => {
-  const year = currentDate.value.getFullYear()
-  const month = currentDate.value.getMonth()
-  
-  const firstDay = new Date(year, month, 1)
-  const startDayOfWeek = firstDay.getDay()
-  
-  const startDate = new Date(firstDay)
-  startDate.setDate(firstDay.getDate() - startDayOfWeek)
-  
-  const cells = []
-  const tempDate = new Date(startDate)
-  
-  for (let i = 0; i < 42; i++) {
-    const dStr = toDateString(tempDate)
-    const isToday = dStr === toDateString(new Date())
-    
-    cells.push({
-      date: new Date(tempDate),
-      dayNumber: tempDate.getDate(),
-      isCurrentMonth: tempDate.getMonth() === month,
-      isToday,
-      dateString: dStr
-    })
-    tempDate.setDate(tempDate.getDate() + 1)
-  }
-  
-  return cells
+  if (monthsData.value.length === 0) return []
+  const idx = Math.min(activeMonthIdx.value, monthsData.value.length - 1)
+  return monthsData.value[idx]?.cells || []
 })
 
 const weekDays = computed(() => {
@@ -659,7 +738,8 @@ const openAddEventModal = (dateStr = null) => {
     categoryId: defaultCatId,
     subcategoryId: defaultSubId,
     recurrence: null,
-    exceptions: {}
+    exceptions: {},
+    reminder: { enabled: false, minutesBefore: 15 }
   }
 
   recurForm.value = {
@@ -686,7 +766,8 @@ const openEditEventModal = (event, e) => {
   }
 
   eventForm.value = {
-    ...event
+    ...event,
+    reminder: event.reminder || { enabled: false, minutesBefore: 15 }
   }
 
   if (event.recurrence) {
@@ -745,45 +826,52 @@ const saveNewEvent = () => {
     exceptions: {}
   }
 
-  events.value.push(newEv)
-  saveToStorage()
-  showAddModal.value = false
+  checkConflictsBeforeSave(() => {
+    events.value.push(newEv)
+    saveToStorage()
+    showAddModal.value = false
+    addToast('Compromisso criado com sucesso', 'success')
+  })
 }
 
 const saveEditedEvent = () => {
   if (!eventForm.value.title.trim()) return
 
-  if (editingExceptionDate.value) {
-    const master = events.value.find(e => e.id === eventForm.value.id)
-    if (master) {
-      if (!master.exceptions) master.exceptions = {}
-      const overrideFields = ['title', 'description', 'date', 'timeStart', 'timeEnd', 'categoryId', 'subcategoryId']
-      const exc = {}
-      overrideFields.forEach(f => { exc[f] = eventForm.value[f] })
-      master.exceptions[editingExceptionDate.value] = exc
-      events.value = [...events.value]
-      saveToStorage()
+  checkConflictsBeforeSave(() => {
+    if (editingExceptionDate.value) {
+      const master = events.value.find(e => e.id === eventForm.value.id)
+      if (master) {
+        if (!master.exceptions) master.exceptions = {}
+        const overrideFields = ['title', 'description', 'date', 'timeStart', 'timeEnd', 'categoryId', 'subcategoryId']
+        const exc = {}
+        overrideFields.forEach(f => { exc[f] = eventForm.value[f] })
+        master.exceptions[editingExceptionDate.value] = exc
+        events.value = [...events.value]
+        saveToStorage()
+      }
+      editingExceptionDate.value = null
+      showEditModal.value = false
+      addToast('Ocorrência editada com sucesso', 'success')
+      return
     }
-    editingExceptionDate.value = null
-    showEditModal.value = false
-    return
-  }
 
-  const index = events.value.findIndex(e => e.id === eventForm.value.id)
-  if (index !== -1) {
-    events.value[index] = {
-      ...eventForm.value,
-      recurrence: buildRecurrence()
+    const index = events.value.findIndex(e => e.id === eventForm.value.id)
+    if (index !== -1) {
+      events.value[index] = {
+        ...eventForm.value,
+        recurrence: buildRecurrence()
+      }
+      saveToStorage()
+      addToast('Compromisso atualizado com sucesso', 'success')
     }
-    saveToStorage()
-  }
-  showEditModal.value = false
+    showEditModal.value = false
+  })
 }
 
 const deleteEvent = () => {
   if (!eventForm.value.id) return
-  events.value = events.value.filter(e => e.id !== eventForm.value.id)
-  saveToStorage()
+  const ev = events.value.find(e => e.id === eventForm.value.id)
+  if (ev) undoableDelete(ev)
   showEditModal.value = false
 }
 
@@ -794,12 +882,14 @@ const handleRecurrenceConfirm = (choice) => {
   if (action === 'delete') {
     if (choice === 'all') {
       events.value = events.value.filter(e => e.id === event._masterId ? false : true)
+      addToast('Série de compromissos excluída', 'success')
     } else {
       const master = events.value.find(e => e.id === event._masterId)
       if (master) {
         if (!master.exceptions) master.exceptions = {}
         master.exceptions[event.date] = { deleted: true }
         events.value = [...events.value]
+        addToast('Ocorrência excluída', 'success')
       }
     }
     saveToStorage()
@@ -808,7 +898,7 @@ const handleRecurrenceConfirm = (choice) => {
     if (choice === 'all') {
       const master = events.value.find(e => e.id === event._masterId)
       if (master) {
-        eventForm.value = { ...master, recurrence: master.recurrence ? { ...master.recurrence } : null }
+        eventForm.value = { ...master, reminder: master.reminder || { enabled: false, minutesBefore: 15 }, recurrence: master.recurrence ? { ...master.recurrence } : null }
         if (master.recurrence) {
           const r = master.recurrence
           recurForm.value = {
@@ -829,9 +919,32 @@ const handleRecurrenceConfirm = (choice) => {
       const master = events.value.find(e => e.id === event._masterId)
       if (master) {
         if (!master.exceptions) master.exceptions = {}
-        eventForm.value = { ...master, ...master.exceptions[event.date], id: master.id, date: event.date }
+        eventForm.value = { ...master, ...master.exceptions[event.date], reminder: master.reminder || { enabled: false, minutesBefore: 15 }, id: master.id, date: event.date }
         editingExceptionDate.value = event.date
         showEditModal.value = true
+      }
+    }
+  } else if (action === 'move') {
+    const targetDate = event.proposedDate
+    if (choice === 'all') {
+      const master = events.value.find(e => e.id === event._masterId)
+      if (master) {
+        master.date = targetDate
+        master.exceptions = {}
+        events.value = [...events.value]
+        saveToStorage()
+        addToast('Série movida para ' + targetDate, 'success')
+      }
+    } else {
+      const master = events.value.find(e => e.id === event._masterId)
+      if (master) {
+        if (!master.exceptions) master.exceptions = {}
+        master.exceptions[event.date] = { deleted: true }
+        const newId = Date.now()
+        events.value.push({ ...master, id: newId, date: targetDate, recurrence: null, exceptions: {} })
+        events.value = [...events.value]
+        saveToStorage()
+        addToast('Ocorrência movida para ' + targetDate, 'success')
       }
     }
   }
@@ -851,6 +964,7 @@ const handleDeleteClick = () => {
     }
     editingExceptionDate.value = null
     showEditModal.value = false
+    addToast('Ocorrência excluída', 'success')
     return
   }
   if (eventForm.value.recurrence) {
@@ -915,6 +1029,7 @@ const addCategory = () => {
   activeCategoryFilters.value[id] = true
   newCategoryName.value = ''
   saveCategoriesToStorage()
+  addToast('Categoria criada com sucesso', 'success')
 }
 
 const deleteCategory = (catId) => {
@@ -939,6 +1054,7 @@ const deleteCategory = (catId) => {
     
     saveToStorage()
     saveCategoriesToStorage()
+    addToast('Categoria excluída', 'info')
   }
 }
 
@@ -956,6 +1072,7 @@ const addSubcategory = (catId) => {
     activeSubcategoryFilters.value[subId] = true
     newSubcategoryNames.value[catId] = ''
     saveCategoriesToStorage()
+    addToast('Subcategoria criada', 'success')
   }
 }
 
@@ -974,6 +1091,7 @@ const deleteSubcategory = (catId, subId) => {
       })
       saveToStorage()
       saveCategoriesToStorage()
+      addToast('Subcategoria excluída', 'info')
     }
   }
 }
@@ -1018,11 +1136,313 @@ const saveEditSubcategory = (catId) => {
   }
   editingSubcategoryId.value = null
 }
+
+// --- Toast System ---
+const toasts = ref([])
+let toastIdCounter = 0
+const addToast = (message, type = 'success', duration = 4000, action = null) => {
+  const id = ++toastIdCounter
+  toasts.value.push({ id, message, type, action })
+  if (duration > 0) {
+    setTimeout(() => removeToast(id), duration)
+  }
+  return id
+}
+const removeToast = (id) => {
+  const idx = toasts.value.findIndex(t => t.id === id)
+  if (idx !== -1) toasts.value.splice(idx, 1)
+}
+
+// --- Undo System ---
+const deletedStack = ref([])
+const undoDelete = () => {
+  const item = deletedStack.value.pop()
+  if (!item) return
+  events.value.push(item.event)
+  saveToStorage()
+  addToast('Exclusão desfeita', 'info', 3000)
+}
+const undoableDelete = (event) => {
+  events.value = events.value.filter(e => e.id !== event.id)
+  saveToStorage()
+  deletedStack.value.push({ event, timestamp: Date.now() })
+  addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })
+  setTimeout(() => {
+    const idx = deletedStack.value.findIndex(d => d.event.id === event.id)
+    if (idx !== -1) deletedStack.value.splice(idx, 1)
+  }, 30000)
+}
+
+// --- Conflict Detection ---
+const detectConflict = (dateStr, timeStart, timeEnd, excludeId = null) => {
+  const conflicts = []
+  events.value.forEach(e => {
+    const expanded = expandRecurrences(e, dateStr, dateStr)
+    expanded.forEach(inst => {
+      if (inst.date !== dateStr) return
+      if (excludeId && (inst.id === excludeId || inst._masterId === excludeId)) return
+      if (inst.timeStart < timeEnd && inst.timeEnd > timeStart) {
+        conflicts.push(inst)
+      }
+    })
+  })
+  return conflicts
+}
+const checkConflictsBeforeSave = (callback) => {
+  const conflicts = detectConflict(
+    eventForm.value.date,
+    eventForm.value.timeStart,
+    eventForm.value.timeEnd,
+    eventForm.value.id
+  )
+  if (conflicts.length > 0) {
+    addToast('Conflito de horário detectado. Salvo mesmo assim.', 'warning', 5000)
+  }
+  callback()
+}
+
+// --- Full Series View ---
+const openSeriesModal = (event) => {
+  const master = events.value.find(e => e.id === (event._masterId || event.id))
+  if (!master) return
+  seriesEvent.value = master
+  const startDate = master.date
+  const endDate = toDateString(new Date(new Date().getFullYear() + 1, 11, 31))
+  seriesInstances.value = expandRecurrences(master, startDate, endDate)
+  showSeriesModal.value = true
+}
+
+// --- Drag & Drop ---
+const onDragStart = (event, e) => {
+  if (event._isRecurringInstance) return
+  draggedEvent.value = event
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData('text/plain', event.id)
+}
+
+const onDragOver = (cell, e) => {
+  if (!draggedEvent.value) return
+  e.preventDefault()
+  dragOverDate.value = cell.dateString
+}
+
+const onDragLeave = () => {
+  dragOverDate.value = null
+}
+
+const onDrop = (cell, e) => {
+  e.preventDefault()
+  if (!draggedEvent.value) return
+  const targetDate = cell.dateString
+  if (draggedEvent.value.date === targetDate) {
+    draggedEvent.value = null
+    dragOverDate.value = null
+    return
+  }
+  const master = events.value.find(ev => ev.id === (draggedEvent.value._masterId || draggedEvent.value.id))
+  if (!master) { draggedEvent.value = null; dragOverDate.value = null; return }
+  if (master.recurrence && draggedEvent.value._isRecurringInstance) {
+    recurrencePending.value = { event: { ...draggedEvent.value, proposedDate: targetDate }, action: 'move' }
+    showRecurrenceConfirm.value = true
+  } else {
+    master.date = targetDate
+    events.value = [...events.value]
+    saveToStorage()
+    addToast('Compromisso movido para ' + targetDate, 'success')
+  }
+  draggedEvent.value = null
+  dragOverDate.value = null
+}
+
+// --- Resize Events ---
+const startResize = (event, e) => {
+  e.preventDefault()
+  e.stopPropagation()
+  resizingEvent.value = event
+  resizeStartY.value = e.clientY
+  resizeStartEnd.value = event.timeEnd
+  const onMouseMove = (me) => {
+    if (!resizingEvent.value) return
+    const deltaY = me.clientY - resizeStartY.value
+    const deltaMinutes = Math.round(deltaY / 0.8)
+    const [h, m] = resizeStartEnd.value.split(':').map(Number)
+    const totalMinutes = h * 60 + m + deltaMinutes
+    const clamped = Math.max(totalMinutes, 1)
+    const newH = Math.floor(clamped / 60) % 24
+    const newM = clamped % 60
+    resizingEvent.value._resizeEnd = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
+  }
+  const onMouseUp = () => {
+    if (resizingEvent.value && resizingEvent.value._resizeEnd) {
+      const master = events.value.find(e => e.id === (resizingEvent.value._masterId || resizingEvent.value.id))
+      if (master) {
+        if (resizingEvent.value._isRecurringInstance) {
+          if (!master.exceptions) master.exceptions = {}
+          master.exceptions[resizingEvent.value.date] = { ...(master.exceptions[resizingEvent.value.date] || {}), timeEnd: resizingEvent.value._resizeEnd }
+        } else {
+          master.timeEnd = resizingEvent.value._resizeEnd
+        }
+        events.value = [...events.value]
+        saveToStorage()
+        addToast('Horário ajustado', 'info', 2000)
+      }
+    }
+    resizingEvent.value = null
+    window.removeEventListener('mousemove', onMouseMove)
+    window.removeEventListener('mouseup', onMouseUp)
+  }
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+}
+
+// --- Keyboard Shortcuts ---
+const handleKeydown = (e) => {
+  const activeEl = document.activeElement?.tagName
+  if (activeEl === 'INPUT' || activeEl === 'TEXTAREA' || activeEl === 'SELECT') return
+
+  if (e.ctrlKey && e.key === 'n') {
+    e.preventDefault()
+    openAddEventModal()
+  } else if (e.ctrlKey && e.key === 'f') {
+    e.preventDefault()
+    searchInput.value?.focus()
+  } else if (e.key === 'ArrowLeft') {
+    navigatePeriod('prev')
+  } else if (e.key === 'ArrowRight') {
+    navigatePeriod('next')
+  } else if (e.key === 't' || e.key === 'T') {
+    navigateToday()
+  } else if (e.key === 'Escape') {
+    if (showAddModal.value) showAddModal.value = false
+    if (showEditModal.value) closeEditModal()
+    if (showSettingsModal.value) showSettingsModal.value = false
+    if (showRecurrenceConfirm.value) { showRecurrenceConfirm.value = false; recurrencePending.value = null }
+  } else if (e.key >= '1' && e.key <= '4') {
+    const idx = parseInt(e.key) - 1
+    if (views[idx]) view.value = views[idx].id
+  }
+}
+
+// --- Reminders ---
+let reminderInterval = null
+const checkReminders = () => {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  const today = toDateString(new Date())
+  const now = new Date()
+  const currentMinutes = now.getHours() * 60 + now.getMinutes()
+  events.value.forEach(e => {
+    if (e.date !== today || !e.reminder?.enabled) return
+    if (e.reminder.fired) return
+    const [h, m] = e.timeStart.split(':').map(Number)
+    const eventMinutes = h * 60 + m
+    const reminderTime = eventMinutes - (e.reminder.minutesBefore || 15)
+    if (currentMinutes >= reminderTime && currentMinutes < eventMinutes) {
+      e.reminder.fired = true
+      try {
+        new Notification(e.title, {
+          body: `${e.timeStart} — ${e.description || 'Sem descrição'}`,
+          tag: 'sincronia-reminder-' + e.id
+        })
+      } catch (_) { /* ignore */ }
+    }
+  })
+}
+
+// --- Export / Import ---
+const exportData = async (format) => {
+  const data = events.value.map(e => ({
+    Titulo: e.title,
+    Descricao: e.description || '',
+    Data: e.date,
+    Inicio: e.timeStart,
+    Fim: e.timeEnd,
+    Categoria: getCategoryName(e.categoryId),
+    Subcategoria: getSubcategoryName(e.categoryId, e.subcategoryId),
+    Repete: e.recurrence ? e.recurrence.freq : ''
+  }))
+  if (format === 'csv') {
+    const header = Object.keys(data[0] || {}).join(',')
+    const rows = data.map(row => Object.values(row).map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    const csv = [header, ...rows].join('\n')
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `sincronia-eventos-${toDateString(new Date())}.csv`
+    a.click(); URL.revokeObjectURL(url)
+    addToast('Exportado como CSV com sucesso', 'success')
+    return
+  }
+  try {
+    const XLSX = await import('xlsx')
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(data)
+    XLSX.utils.book_append_sheet(wb, ws, 'Eventos')
+    const catSheet = categoriesData.value.map(c => ({ Categoria: c.name, Cor: c.colorCode, Subcategorias: c.subcategories.map(s => s.name).join(', ') }))
+    const ws2 = XLSX.utils.json_to_sheet(catSheet)
+    XLSX.utils.book_append_sheet(wb, ws2, 'Categorias')
+    XLSX.writeFile(wb, `sincronia-eventos-${toDateString(new Date())}.xlsx`)
+    addToast('Exportado como XLSX com sucesso', 'success')
+  } catch (_) {
+    addToast('XLSX não disponível. Use CSV.', 'error')
+  }
+}
+
+const handleImportFile = (e) => {
+  const file = e.target.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = (evt) => {
+    const text = evt.target.result
+    const lines = text.split('\n').filter(l => l.trim())
+    if (lines.length < 2) { addToast('Arquivo vazio ou inválido', 'error'); return }
+    const headers = lines[0].split(',').map(h => h.replace(/^"+|"+$/g, '').trim())
+    const imported = []
+    for (let i = 1; i < lines.length; i++) {
+      const vals = lines[i].split(',').map(v => v.replace(/^"+|"+$/g, '').trim())
+      const obj = {}
+      headers.forEach((h, idx) => { obj[h] = vals[idx] || '' })
+      if (obj.Titulo && obj.Data) {
+        imported.push({
+          id: Date.now() + i,
+          title: obj.Titulo,
+          description: obj.Descricao || '',
+          date: obj.Data,
+          timeStart: obj.Inicio || '09:00',
+          timeEnd: obj.Fim || '10:00',
+          categoryId: 'trabalho',
+          subcategoryId: 'reuniao',
+          recurrence: null,
+          exceptions: {}
+        })
+      }
+    }
+    if (imported.length === 0) { addToast('Nenhum evento válido encontrado', 'error'); return }
+    events.value = [...events.value, ...imported]
+    saveToStorage()
+    addToast(`${imported.length} evento(s) importado(s) com sucesso`, 'success')
+  }
+  reader.readAsText(file)
+  e.target.value = ''
+}
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  if (reminderInterval) clearInterval(reminderInterval)
+})
 </script>
 
 <template>
   <div class="app-container">
     
+    <!-- TOAST CONTAINER -->
+    <div class="toast-container">
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast-' + t.type">
+        <span class="toast-message">{{ t.message }}</span>
+        <button v-if="t.action" @click="t.action.handler(); removeToast(t.id)" class="toast-action-btn">{{ t.action.label }}</button>
+        <button @click="removeToast(t.id)" class="toast-close-btn">&times;</button>
+      </div>
+    </div>
+
     <!-- SIDEBAR OVERLAY BACKDROP -->
     <div v-if="isSidebarOpen" @click="isSidebarOpen = false" class="sidebar-overlay-backdrop"></div>
     
@@ -1187,9 +1607,13 @@ const saveEditSubcategory = (catId) => {
               class="day-cell"
               :class="{ 
                 'outside-month': !cell.isCurrentMonth,
-                'is-today': cell.isToday
+                'is-today': cell.isToday,
+                'drag-over': dragOverDate === cell.dateString
               }"
               @click="selectDayInGrid(cell)"
+              @dragover="onDragOver(cell, $event)"
+              @drop="onDrop(cell, $event)"
+              @dragleave="onDragLeave"
             >
               <div class="day-cell-header">
                 <span class="day-number">{{ cell.dayNumber }}</span>
@@ -1207,13 +1631,21 @@ const saveEditSubcategory = (catId) => {
                   v-for="ev in getEventsForDate(cell.dateString)" 
                   :key="ev.id"
                   class="event-capsule"
+                  :class="{ 'dragging': draggedEvent && (draggedEvent.id === ev.id || draggedEvent.id === ev._masterId) }"
                   :style="getEventStyle(ev.categoryId)"
+                  :draggable="!ev._isRecurringInstance"
                   @click="openEditEventModal(ev, $event)"
+                  @dragstart="onDragStart(ev, $event)"
                   :title="`${ev.timeStart} ${ev.title} - ${getCategoryName(ev.categoryId)} (${getSubcategoryName(ev.categoryId, ev.subcategoryId)})`"
                 >
                   <span class="event-time-badge">{{ ev.timeStart }}</span>
                   <span class="event-title-text">{{ ev.title }}</span>
                   <span v-if="ev.recurrence || ev._isRecurringInstance" class="recur-icon">⟳</span>
+                  <span class="event-capsule-tooltip">
+                    <strong>{{ ev.timeStart }} — {{ ev.timeEnd }}</strong><br>
+                    {{ ev.title }}<br>
+                    <small>{{ getCategoryName(ev.categoryId) }}{{ getSubcategoryName(ev.categoryId, ev.subcategoryId) ? ' / ' + getSubcategoryName(ev.categoryId, ev.subcategoryId) : '' }}</small>
+                  </span>
                 </div>
                 
                 <!-- Dynamic dots indicator for mobile screens -->
@@ -1244,35 +1676,38 @@ const saveEditSubcategory = (catId) => {
             </div>
             
             <div class="week-events-list">
-              <div 
-                v-for="ev in getEventsForDate(day.dateString)" 
-                :key="ev.id"
-                class="event-card"
-                :style="getEventCardStyle(ev.categoryId)"
-                @click="openEditEventModal(ev, $event)"
-              >
-                <div class="event-card-header" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
-                  <span class="event-card-title">{{ ev.title }}</span>
-                  <span v-if="ev.recurrence || ev._isRecurringInstance" class="recur-icon">⟳</span>
-                  <div class="category-badges" style="display: flex; gap: 4px; flex-wrap: wrap;">
-                    <span class="category-tag-badge" :style="{ backgroundColor: getCategoryColor(ev.categoryId), color: 'white', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }">
-                      {{ getCategoryName(ev.categoryId) }}
-                    </span>
-                    <span class="subcategory-tag-badge" :style="{ border: `1px solid ${getCategoryColor(ev.categoryId)}`, color: getCategoryColor(ev.categoryId), fontSize: '9px', padding: '1px 5px', borderRadius: '4px', fontWeight: '600' }">
-                      {{ getSubcategoryName(ev.categoryId, ev.subcategoryId) }}
-                    </span>
+                <div 
+                  v-for="ev in getEventsForDate(day.dateString)" 
+                  :key="ev.id"
+                  class="event-card"
+                  :style="getEventCardStyle(ev.categoryId)"
+                  @click="openEditEventModal(ev, $event)"
+                >
+                  <div class="event-card-header" style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                    <span class="event-card-title">{{ ev.title }}</span>
+                    <span v-if="ev.recurrence || ev._isRecurringInstance" class="recur-icon">⟳</span>
+                    <div class="category-badges" style="display: flex; gap: 4px; flex-wrap: wrap;">
+                      <span class="category-tag-badge" :style="{ backgroundColor: getCategoryColor(ev.categoryId), color: 'white', fontSize: '9px', padding: '2px 6px', borderRadius: '4px', fontWeight: '700', textTransform: 'uppercase' }">
+                        {{ getCategoryName(ev.categoryId) }}
+                      </span>
+                      <span class="subcategory-tag-badge" :style="{ border: `1px solid ${getCategoryColor(ev.categoryId)}`, color: getCategoryColor(ev.categoryId), fontSize: '9px', padding: '1px 5px', borderRadius: '4px', fontWeight: '600' }">
+                        {{ getSubcategoryName(ev.categoryId, ev.subcategoryId) }}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <span class="event-card-time">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    {{ ev.timeStart }} - {{ ev.timeEnd }}
+                  </span>
+                  
+                  <p v-if="ev.description" class="event-card-desc">
+                    {{ ev.description }}
+                  </p>
+                  <div class="event-resize-handle" @mousedown.stop="startResize(ev, $event)" title="Arrastar para redimensionar">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12h22M12 1v22"/></svg>
                   </div>
                 </div>
-                
-                <span class="event-card-time">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                  {{ ev.timeStart }} - {{ ev.timeEnd }}
-                </span>
-                
-                <p v-if="ev.description" class="event-card-desc">
-                  {{ ev.description }}
-                </p>
-              </div>
               
               <!-- Quick Add placeholder at column bottom -->
               <div @click="openAddEventModal(day.dateString)" class="week-add-placeholder">
@@ -1370,6 +1805,9 @@ const saveEditSubcategory = (catId) => {
                   <p v-if="ev.description" class="event-card-desc" style="font-size: 12px;">
                     {{ ev.description }}
                   </p>
+                  <div class="event-resize-handle" @mousedown.stop="startResize(ev, $event)" title="Arrastar para redimensionar">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12h22M12 1v22"/></svg>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1589,6 +2027,21 @@ const saveEditSubcategory = (catId) => {
               <input type="date" v-model="recurForm.endDate" class="form-input" />
             </div>
           </template>
+
+          <!-- Reminder -->
+          <div class="form-group">
+            <label class="form-checkbox-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" v-model="eventForm.reminder.enabled" />
+              <span>Lembrete</span>
+            </label>
+            <select v-if="eventForm.reminder.enabled" v-model.number="eventForm.reminder.minutesBefore" class="form-select" style="margin-top: 6px; width: auto;">
+              <option :value="5">5 minutos antes</option>
+              <option :value="10">10 minutos antes</option>
+              <option :value="15">15 minutos antes</option>
+              <option :value="30">30 minutos antes</option>
+              <option :value="60">1 hora antes</option>
+            </select>
+          </div>
         </form>
 
         <footer class="modal-footer">
@@ -1745,6 +2198,21 @@ const saveEditSubcategory = (catId) => {
               <input type="date" v-model="recurForm.endDate" class="form-input" />
             </div>
           </template>
+
+          <!-- Reminder -->
+          <div class="form-group">
+            <label class="form-checkbox-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" v-model="eventForm.reminder.enabled" />
+              <span>Lembrete</span>
+            </label>
+            <select v-if="eventForm.reminder.enabled" v-model.number="eventForm.reminder.minutesBefore" class="form-select" style="margin-top: 6px; width: auto;">
+              <option :value="5">5 minutos antes</option>
+              <option :value="10">10 minutos antes</option>
+              <option :value="15">15 minutos antes</option>
+              <option :value="30">30 minutos antes</option>
+              <option :value="60">1 hora antes</option>
+            </select>
+          </div>
         </form>
 
         <footer class="modal-footer">
@@ -1778,8 +2246,42 @@ const saveEditSubcategory = (catId) => {
             <button @click="showRecurrenceConfirm = false; recurrencePending = null" class="btn-secondary" style="width: 100%; justify-content: center;">
               Cancelar
             </button>
+            <button @click="openSeriesModal(recurrencePending?.event)" class="btn-secondary" style="width: 100%; justify-content: center; margin-top: 8px;">
+              Ver todas as ocorrências
+            </button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- MODAL: FULL SERIES VIEW -->
+    <div v-if="showSeriesModal" class="modal-overlay">
+      <div class="modal-content" style="max-width: 500px; max-height: 80vh; display: flex; flex-direction: column;">
+        <header class="modal-header">
+          <span class="modal-title">Todas as Ocorrências</span>
+          <button @click="showSeriesModal = false" class="modal-close-btn">&times;</button>
+        </header>
+        <div class="modal-body" style="overflow-y: auto; flex-grow: 1; padding: 16px 20px;">
+          <p style="margin: 0 0 12px; font-size: 13px; color: var(--text-secondary);">
+            <strong style="color: var(--text-primary);">{{ seriesEvent?.title }}</strong>
+            — {{ seriesInstances.length }} ocorrência(s)
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <div v-for="inst in seriesInstances" :key="inst.id"
+              class="series-instance-row"
+              @click="showSeriesModal = false; openEditEventModal(inst, $event)"
+              style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s;"
+              @mouseenter="$event.currentTarget.style.background = 'var(--bg-secondary)'"
+              @mouseleave="$event.currentTarget.style.background = ''">
+              <span style="font-size: 12px; font-weight: 600; color: var(--text-primary); min-width: 90px;">{{ inst.date }}</span>
+              <span style="font-size: 11px; color: var(--text-muted);">{{ inst.timeStart }} — {{ inst.timeEnd }}</span>
+              <span v-if="inst._isRecurringInstance && seriesEvent?.exceptions?.[inst.date]" style="font-size: 10px; color: var(--accent); margin-left: auto;">(editada)</span>
+            </div>
+          </div>
+        </div>
+        <footer class="modal-footer" style="padding: 12px 20px;">
+          <button @click="showSeriesModal = false" class="btn-primary">Fechar</button>
+        </footer>
       </div>
     </div>
 
@@ -1911,6 +2413,16 @@ const saveEditSubcategory = (catId) => {
             </div>
           </div>
           
+          <!-- Section C: Export / Import -->
+          <div class="settings-section-card" style="background-color: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+            <h4 style="margin: 0; font-size: 14px; font-weight: 700; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.5px;">Exportar / Importar Dados</h4>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button @click="exportData('csv')" class="btn-secondary">Exportar CSV</button>
+              <button @click="exportData('xlsx')" class="btn-secondary">Exportar XLSX</button>
+              <button @click="importFileInput?.click()" class="btn-secondary">Importar CSV</button>
+            </div>
+            <input type="file" ref="importFileInput" accept=".csv,.txt" style="display: none" @change="handleImportFile" />
+          </div>
         </div>
         
         <footer class="modal-footer" style="padding: 16px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; background-color: var(--bg-secondary);">
