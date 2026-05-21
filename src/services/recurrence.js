@@ -166,8 +166,10 @@ export function expandRecurrences(event, rangeStart, rangeEnd) {
     const start = startResult.data
     const rangeStartDResult = parseDate(rangeStart)
     if (!rangeStartDResult.success) return { success: false, data: [], error: rangeStartDResult.error }
+    const rangeStartD = rangeStartDResult.data
     const rangeEndDResult = parseDate(rangeEnd)
     if (!rangeEndDResult.success) return { success: false, data: [], error: rangeEndDResult.error }
+    const rangeEndD = rangeEndDResult.data
 
     const maxFuture = new Date(start)
     maxFuture.setFullYear(maxFuture.getFullYear() + 1)
