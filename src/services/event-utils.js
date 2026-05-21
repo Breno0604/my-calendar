@@ -7,6 +7,33 @@ import { toDateString, parseDate, formatDateFull } from './date.js'
 import { expandRecurrences } from './recurrence.js'
 
 /**
+ * Computes the rangeStart and rangeEnd strings for a given month.
+ * @param {Date} currentDate
+ * @returns {{ success: boolean, data: { rangeStart: string, rangeEnd: string }, error: string|null }}
+ * @example
+ * computeMonthRange(new Date('2026-05-21'))
+ * // { success: true, data: { rangeStart: '2026-05-01', rangeEnd: '2026-05-31' }, error: null }
+ */
+function computeMonthRange(currentDate) {
+  if (!(currentDate instanceof Date) || isNaN(currentDate.getTime())) {
+    return { success: false, data: null, error: 'currentDate deve ser uma Date válida' }
+  }
+  try {
+    const year = currentDate.getFullYear()
+    const month = currentDate.getMonth()
+    const firstOfMonth = new Date(year, month, 1)
+    const firstOfNext = new Date(year, month + 1, 1)
+    const rangeStartResult = toDateString(firstOfMonth)
+    if (!rangeStartResult.success) return { success: false, data: null, error: rangeStartResult.error }
+    const rangeEndResult = toDateString(new Date(firstOfNext.getTime() - 1))
+    if (!rangeEndResult.success) return { success: false, data: null, error: rangeEndResult.error }
+    return { success: true, data: { rangeStart: rangeStartResult.data, rangeEnd: rangeEndResult.data }, error: null }
+  } catch (err) {
+    return { success: false, data: null, error: `computeMonthRange: ${err.message}` }
+  }
+}
+
+/**
  * @param {string} catId
  * @param {Array<{ id: string, colorCode: string }>} categories
  * @returns {{ success: boolean, data: string, error: string|null }}
@@ -143,18 +170,13 @@ export function groupEvents(events, currentDate) {
     return { success: false, data: [], error: 'currentDate deve ser uma Date válida' }
   }
   try {
-    const year = currentDate.getFullYear()
-    const month = currentDate.getMonth()
-    const firstOfMonth = new Date(year, month, 1)
-    const firstOfNext = new Date(year, month + 1, 1)
-    const rangeStartResult = toDateString(firstOfMonth)
-    if (!rangeStartResult.success) return { success: false, data: [], error: rangeStartResult.error }
-    const rangeEndResult = toDateString(new Date(firstOfNext.getTime() - 1))
-    if (!rangeEndResult.success) return { success: false, data: [], error: rangeEndResult.error }
+    const rangeResult = computeMonthRange(currentDate)
+    if (!rangeResult.success) return { success: false, data: [], error: rangeResult.error }
+    const { rangeStart, rangeEnd } = rangeResult.data
 
     const groups = {}
     events.forEach(e => {
-      const expandedResult = expandRecurrences(e, rangeStartResult.data, rangeEndResult.data)
+      const expandedResult = expandRecurrences(e, rangeStart, rangeEnd)
       if (!expandedResult.success) return
       expandedResult.data.forEach(inst => {
         if (!groups[inst.date]) groups[inst.date] = []

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { deleteSeries, deleteOneInstance, editSeries, editOneInstance, moveSeries, moveOneInstance } from './services/recurrence.js'
 
 // --- State & Config ---
 const views = [
@@ -516,43 +517,52 @@ const initInfiniteScroll = () => {
 }
 
 // --- Navigation Operations ---
+const navigateMonthView = (offset) => {
+  const targetIdx = activeMonthIdx.value + offset
+  if (targetIdx >= 0 && targetIdx < monthsData.value.length) {
+    activeMonthIdx.value = targetIdx
+    const m = monthsData.value[targetIdx]
+    currentDate.value = new Date(m.year, m.month, 1)
+  } else if (targetIdx >= monthsData.value.length) {
+    const last = monthsData.value[monthsData.value.length - 1]
+    const nextM = last.month === 11 ? { year: last.year + 1, month: 0 } : { year: last.year, month: last.month + 1 }
+    monthsData.value.push(buildMonthData(nextM.year, nextM.month))
+    activeMonthIdx.value = monthsData.value.length - 1
+    currentDate.value = new Date(nextM.year, nextM.month, 1)
+  } else {
+    const first = monthsData.value[0]
+    const prevM = first.month === 0 ? { year: first.year - 1, month: 11 } : { year: first.year, month: first.month - 1 }
+    monthsData.value.unshift(buildMonthData(prevM.year, prevM.month))
+    activeMonthIdx.value = 0
+    currentDate.value = new Date(prevM.year, prevM.month, 1)
+  }
+}
+
+const navigateWeekView = (offset) => {
+  const d = new Date(currentDate.value)
+  d.setDate(d.getDate() + (offset * 7))
+  currentDate.value = d
+}
+
+const navigateDayView = (offset) => {
+  const d = new Date(currentDate.value)
+  d.setDate(d.getDate() + offset)
+  currentDate.value = d
+  selectedDate.value = d
+}
+
+const navigateListView = (offset) => {
+  const d = new Date(currentDate.value)
+  d.setMonth(d.getMonth() + offset)
+  currentDate.value = d
+}
+
 const navigatePeriod = (direction) => {
   const offset = direction === 'next' ? 1 : -1
-
-  if (view.value === 'month') {
-    const targetIdx = activeMonthIdx.value + offset
-    if (targetIdx >= 0 && targetIdx < monthsData.value.length) {
-      activeMonthIdx.value = targetIdx
-      const m = monthsData.value[targetIdx]
-      currentDate.value = new Date(m.year, m.month, 1)
-    } else if (targetIdx >= monthsData.value.length) {
-      const last = monthsData.value[monthsData.value.length - 1]
-      const nextM = last.month === 11 ? { year: last.year + 1, month: 0 } : { year: last.year, month: last.month + 1 }
-      monthsData.value.push(buildMonthData(nextM.year, nextM.month))
-      activeMonthIdx.value = monthsData.value.length - 1
-      currentDate.value = new Date(nextM.year, nextM.month, 1)
-    } else {
-      const first = monthsData.value[0]
-      const prevM = first.month === 0 ? { year: first.year - 1, month: 11 } : { year: first.year, month: first.month - 1 }
-      monthsData.value.unshift(buildMonthData(prevM.year, prevM.month))
-      activeMonthIdx.value = 0
-      currentDate.value = new Date(prevM.year, prevM.month, 1)
-    }
-  } else if (view.value === 'week') {
-    const d = new Date(currentDate.value)
-    d.setDate(d.getDate() + (offset * 7))
-    currentDate.value = d
-  } else if (view.value === 'day') {
-    const d = new Date(currentDate.value)
-    d.setDate(d.getDate() + offset)
-    currentDate.value = d
-    selectedDate.value = d
-  } else {
-    // List/Agenda view just shifts month
-    const d = new Date(currentDate.value)
-    d.setMonth(d.getMonth() + offset)
-    currentDate.value = d
-  }
+  if (view.value === 'month') navigateMonthView(offset)
+  else if (view.value === 'week') navigateWeekView(offset)
+  else if (view.value === 'day') navigateDayView(offset)
+  else navigateListView(offset)
 }
 
 const navigateToday = () => {
@@ -880,73 +890,35 @@ const handleRecurrenceConfirm = (choice) => {
   const { event, action } = recurrencePending.value
 
   if (action === 'delete') {
-    if (choice === 'all') {
-      events.value = events.value.filter(e => e.id === event._masterId ? false : true)
-      addToast('Série de compromissos excluída', 'success')
-    } else {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        if (!master.exceptions) master.exceptions = {}
-        master.exceptions[event.date] = { deleted: true }
-        events.value = [...events.value]
-        addToast('Ocorrência excluída', 'success')
-      }
-    }
+    const result = choice === 'all'
+      ? deleteSeries(event._masterId, events.value)
+      : deleteOneInstance(event._masterId, event.date, events.value)
+    if (!result.success) { addToast(result.error, 'error'); return }
+    events.value = result.data
     saveToStorage()
+    addToast(choice === 'all' ? 'Série de compromissos excluída' : 'Ocorrência excluída', 'success')
     showEditModal.value = false
   } else if (action === 'edit') {
     if (choice === 'all') {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        eventForm.value = { ...master, reminder: master.reminder || { enabled: false, minutesBefore: 15 }, recurrence: master.recurrence ? { ...master.recurrence } : null }
-        if (master.recurrence) {
-          const r = master.recurrence
-          recurForm.value = {
-            freq: r.freq,
-            interval: r.interval,
-            endType: r.until ? 'date' : (r.count ? 'count' : 'never'),
-            endCount: r.count || 10,
-            endDate: r.until || '',
-            byDay: r.byDay || [],
-            byMonthDay: r.byMonthDay || 1
-          }
-        } else {
-          recurForm.value = { freq: 'none', interval: 1, endType: 'never', endCount: 10, endDate: '', byDay: [], byMonthDay: 1 }
-        }
-        showEditModal.value = true
-      }
+      const seriesResult = editSeries(event._masterId, null, events.value)
+      if (!seriesResult.success) { addToast(seriesResult.error, 'error'); return }
+      eventForm.value = seriesResult.data.formData
+      recurForm.value = seriesResult.data.recurForm
     } else {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        if (!master.exceptions) master.exceptions = {}
-        eventForm.value = { ...master, ...master.exceptions[event.date], reminder: master.reminder || { enabled: false, minutesBefore: 15 }, id: master.id, date: event.date }
-        editingExceptionDate.value = event.date
-        showEditModal.value = true
-      }
+      const instResult = editOneInstance(event._masterId, event.date, events.value)
+      if (!instResult.success) { addToast(instResult.error, 'error'); return }
+      eventForm.value = instResult.data.formData
+      editingExceptionDate.value = instResult.data.editingDate
     }
+    showEditModal.value = true
   } else if (action === 'move') {
-    const targetDate = event.proposedDate
-    if (choice === 'all') {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        master.date = targetDate
-        master.exceptions = {}
-        events.value = [...events.value]
-        saveToStorage()
-        addToast('Série movida para ' + targetDate, 'success')
-      }
-    } else {
-      const master = events.value.find(e => e.id === event._masterId)
-      if (master) {
-        if (!master.exceptions) master.exceptions = {}
-        master.exceptions[event.date] = { deleted: true }
-        const newId = Date.now()
-        events.value.push({ ...master, id: newId, date: targetDate, recurrence: null, exceptions: {} })
-        events.value = [...events.value]
-        saveToStorage()
-        addToast('Ocorrência movida para ' + targetDate, 'success')
-      }
-    }
+    const result = choice === 'all'
+      ? moveSeries(event._masterId, event.proposedDate, events.value)
+      : moveOneInstance(event._masterId, event.date, event.proposedDate, events.value)
+    if (!result.success) { addToast(result.error, 'error'); return }
+    events.value = result.data
+    saveToStorage()
+    addToast('Compromisso movido para ' + event.proposedDate, 'success')
   }
 
   showRecurrenceConfirm.value = false
@@ -1255,44 +1227,46 @@ const onDrop = (cell, e) => {
 }
 
 // --- Resize Events ---
+const onResizeMouseMove = (me) => {
+  if (!resizingEvent.value) return
+  const deltaY = me.clientY - resizeStartY.value
+  const deltaMinutes = Math.round(deltaY / 0.8)
+  const [h, m] = resizeStartEnd.value.split(':').map(Number)
+  const totalMinutes = h * 60 + m + deltaMinutes
+  const clamped = Math.max(totalMinutes, 1)
+  const newH = Math.floor(clamped / 60) % 24
+  const newM = clamped % 60
+  resizingEvent.value._resizeEnd = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
+}
+
+const onResizeMouseUp = () => {
+  if (resizingEvent.value && resizingEvent.value._resizeEnd) {
+    const master = events.value.find(e => e.id === (resizingEvent.value._masterId || resizingEvent.value.id))
+    if (master) {
+      if (resizingEvent.value._isRecurringInstance) {
+        if (!master.exceptions) master.exceptions = {}
+        master.exceptions[resizingEvent.value.date] = { ...(master.exceptions[resizingEvent.value.date] || {}), timeEnd: resizingEvent.value._resizeEnd }
+      } else {
+        master.timeEnd = resizingEvent.value._resizeEnd
+      }
+      events.value = [...events.value]
+      saveToStorage()
+      addToast('Horário ajustado', 'info', 2000)
+    }
+  }
+  resizingEvent.value = null
+  window.removeEventListener('mousemove', onResizeMouseMove)
+  window.removeEventListener('mouseup', onResizeMouseUp)
+}
+
 const startResize = (event, e) => {
   e.preventDefault()
   e.stopPropagation()
   resizingEvent.value = event
   resizeStartY.value = e.clientY
   resizeStartEnd.value = event.timeEnd
-  const onMouseMove = (me) => {
-    if (!resizingEvent.value) return
-    const deltaY = me.clientY - resizeStartY.value
-    const deltaMinutes = Math.round(deltaY / 0.8)
-    const [h, m] = resizeStartEnd.value.split(':').map(Number)
-    const totalMinutes = h * 60 + m + deltaMinutes
-    const clamped = Math.max(totalMinutes, 1)
-    const newH = Math.floor(clamped / 60) % 24
-    const newM = clamped % 60
-    resizingEvent.value._resizeEnd = `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`
-  }
-  const onMouseUp = () => {
-    if (resizingEvent.value && resizingEvent.value._resizeEnd) {
-      const master = events.value.find(e => e.id === (resizingEvent.value._masterId || resizingEvent.value.id))
-      if (master) {
-        if (resizingEvent.value._isRecurringInstance) {
-          if (!master.exceptions) master.exceptions = {}
-          master.exceptions[resizingEvent.value.date] = { ...(master.exceptions[resizingEvent.value.date] || {}), timeEnd: resizingEvent.value._resizeEnd }
-        } else {
-          master.timeEnd = resizingEvent.value._resizeEnd
-        }
-        events.value = [...events.value]
-        saveToStorage()
-        addToast('Horário ajustado', 'info', 2000)
-      }
-    }
-    resizingEvent.value = null
-    window.removeEventListener('mousemove', onMouseMove)
-    window.removeEventListener('mouseup', onMouseUp)
-  }
-  window.addEventListener('mousemove', onMouseMove)
-  window.addEventListener('mouseup', onMouseUp)
+  window.addEventListener('mousemove', onResizeMouseMove)
+  window.addEventListener('mouseup', onResizeMouseUp)
 }
 
 // --- Keyboard Shortcuts ---
