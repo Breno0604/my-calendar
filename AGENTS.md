@@ -29,7 +29,7 @@
 - **Calendar workspace** — uses `flex-grow: 1` (never `calc()`) to fill remaining height.
 - **Month grid** — `grid-template-columns: repeat(7, 1fr)` with `min-width: 0` on day cells to prevent overflow.
 - **Dark mode** — toggled via `.dark` class on `<html>` (or root), persisted in LocalStorage.
-- **Categories data** — loaded/saved in LocalStorage under key `sincronia-categories-data`.
+- **Categories data** — loaded/saved in LocalStorage under key `sincronia_categories`.
 - **Portuguese UI** — all labels, placeholders, and user-facing strings in pt-BR.
 - **`opencode.json` not present** — `.opencode/` only contains plan files; no tool config.
 

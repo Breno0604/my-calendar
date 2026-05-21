@@ -174,7 +174,11 @@ const getNextRecurDate = (current, r) => {
   if (r.freq === 'daily') {
     d.setDate(d.getDate() + r.interval)
   } else if (r.freq === 'weekly') {
-    if (r.byDay && r.byDay.length > 0 && r.byDay.length < 7) {
+    if (r.byDay && r.byDay.length > 0) {
+      if (r.byDay.length === 7) {
+        d.setDate(d.getDate() + r.interval)
+        return d
+      }
       const startWeek = Math.floor(current.getTime() / (7 * 86400000))
       for (let i = 1; i <= 14; i++) {
         const test = new Date(current)
@@ -799,6 +803,7 @@ const handleRecurrenceConfirm = (choice) => {
       }
     }
     saveToStorage()
+    showEditModal.value = false
   } else if (action === 'edit') {
     if (choice === 'all') {
       const master = events.value.find(e => e.id === event._masterId)

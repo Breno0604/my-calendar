@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 
 session-*.md
+test-results/
+playwright-report/
