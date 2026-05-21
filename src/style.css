@@ -146,16 +146,10 @@ body {
   padding: 24px;
   flex-shrink: 0;
   position: relative;
-  overflow: hidden;
+  overflow: hidden auto;
   white-space: nowrap;
   transition: width 0.3s ease, padding 0.3s ease, border 0.3s ease;
   z-index: 10;
-}
-
-.sidebar.closed {
-  width: 0;
-  padding: 0;
-  border: none;
 }
 
 /* Sidebar edge toggle button (desktop only) */
@@ -1356,6 +1350,11 @@ body {
   .sidebar-overlay-backdrop {
     display: none;
   }
+  .sidebar.closed {
+    width: 0;
+    padding: 0;
+    border: none;
+  }
 }
 
 /* Micro-interactions active state feedback */
@@ -1848,17 +1847,6 @@ body {
 .settings-sub-pill:hover {
   background-color: var(--bg-tertiary);
   border-color: var(--accent-light);
-}
-
-.custom-checkbox {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  border: 2px solid var(--border-color);
-  display: inline-block;
-  position: relative;
-  transition: all var(--transition-fast);
-  flex-shrink: 0;
 }
 
 .custom-checkbox.sub-checkbox {

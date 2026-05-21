@@ -873,13 +873,13 @@ const saveEditSubcategory = (catId) => {
         <!-- 1. MONTH VIEW -->
         <div v-if="view === 'month'" class="month-view-grid" style="animation: fadeIn 0.2s ease;">
           <div class="grid-weekdays-header">
-            <div class="weekday-header-cell" data-short="D">Dom</div>
-            <div class="weekday-header-cell" data-short="S">Seg</div>
-            <div class="weekday-header-cell" data-short="T">Ter</div>
-            <div class="weekday-header-cell" data-short="Q">Qua</div>
-            <div class="weekday-header-cell" data-short="Q">Qui</div>
-            <div class="weekday-header-cell" data-short="S">Sex</div>
-            <div class="weekday-header-cell" data-short="S">Sáb</div>
+            <div class="weekday-header-cell" data-short="Dom">Dom</div>
+            <div class="weekday-header-cell" data-short="Seg">Seg</div>
+            <div class="weekday-header-cell" data-short="Ter">Ter</div>
+            <div class="weekday-header-cell" data-short="Qua">Qua</div>
+            <div class="weekday-header-cell" data-short="Qui">Qui</div>
+            <div class="weekday-header-cell" data-short="Sex">Sex</div>
+            <div class="weekday-header-cell" data-short="Sáb">Sáb</div>
           </div>
           
           <div class="grid-days-body">
@@ -990,7 +990,7 @@ const saveEditSubcategory = (catId) => {
             <span class="mini-calendar-title">{{ formatMonthYear(currentDate) }}</span>
             <div class="mini-grid-days">
               <!-- Weekday initials -->
-              <div v-for="wd in ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']" :key="wd" style="font-size: 11px; font-weight: 700; color: var(--text-muted);">
+              <div v-for="wd in ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']" :key="wd" style="font-size: 11px; font-weight: 700; color: var(--text-muted);">
                 {{ wd }}
               </div>
               <!-- Days cells -->
