@@ -13,6 +13,7 @@ const view = ref('month')
 const currentDate = ref(new Date())
 const selectedDate = ref(new Date())
 const searchQuery = ref('')
+const searchInput = ref(null)
 const isDarkMode = ref(false)
 
 // --- Dynamic Categories Data (Default loaded/saved in LocalStorage) ---
@@ -85,7 +86,7 @@ const events = ref([])
 const showAddModal = ref(false)
 const showEditModal = ref(false)
 const showSettingsModal = ref(false)
-const isSidebarOpen = ref(false)
+const isSidebarOpen = ref(window.innerWidth > 1024)
 
 // --- Settings Environment Forms State ---
 const newCategoryName = ref('')
@@ -728,7 +729,7 @@ const saveEditSubcategory = (catId) => {
     <div v-if="isSidebarOpen" @click="isSidebarOpen = false" class="sidebar-overlay-backdrop"></div>
     
     <!-- SIDEBAR PANEL -->
-    <aside class="sidebar" :class="{ 'open': isSidebarOpen }">
+    <aside class="sidebar" :class="{ 'open': isSidebarOpen, 'closed': !isSidebarOpen }">
       <div class="logo-section">
         <div class="logo-icon">S</div>
         <span class="logo-text">Sincronia</span>
@@ -799,75 +800,69 @@ const saveEditSubcategory = (catId) => {
       </footer>
     </aside>
     
+    <!-- Sidebar edge toggle button (desktop) -->
+    <button @click="isSidebarOpen = !isSidebarOpen" class="sidebar-toggle-edge" title="Recolher/Expandir">
+      <svg v-if="isSidebarOpen" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m15 18-6-6 6-6"/></svg>
+      <svg v-else xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m9 18 6-6-6-6"/></svg>
+    </button>
+    
     <!-- MAIN WORKSPACE DASHBOARD -->
     <main class="main-content">
       
       <!-- TOP NAVIGATION HEADER -->
       <header class="top-header">
         
-        <div class="header-left">
-          
-          <!-- Mobile hamburger menu button -->
-          <button @click="isSidebarOpen = true" class="nav-btn hamburger-btn" title="Abrir Filtros">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <!-- Mobile hamburger menu button -->
+        <button @click="isSidebarOpen = !isSidebarOpen" class="nav-btn hamburger-btn" title="Abrir/Fechar Filtros">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        
+        <!-- Period Navigation (Prev, Today, Next) -->
+        <div class="view-navigator">
+          <button @click="navigatePeriod('prev')" class="nav-btn" title="Anterior">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
           </button>
-          
-          <!-- Period Navigation (Prev, Today, Next) -->
-          <div class="view-navigator">
-            <button @click="navigatePeriod('prev')" class="nav-btn" title="Anterior">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-            </button>
-            <button @click="navigateToday" class="btn-secondary" style="padding: 6px 14px; font-size: 13px;">
-              Hoje
-            </button>
-            <button @click="navigatePeriod('next')" class="nav-btn" title="Próximo">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-            </button>
-          </div>
-          
-          <!-- Large Context Title -->
-          <h2 class="current-period-title">
-            <span v-if="view === 'month' || view === 'list'">{{ formatMonthYear(currentDate) }}</span>
-            <span v-else-if="view === 'week'">
-              {{ formatDateShort(weekDays[0].date) }} — {{ formatDateShort(weekDays[6].date) }}
-            </span>
-            <span v-else-if="view === 'day'">{{ formatDateFull(selectedDate) }}</span>
-          </h2>
-          
-          <!-- View selector tabs -->
-          <div class="view-selector-tabs">
-            <button 
-              v-for="v in views" 
-              :key="v.id"
-              @click="view = v.id"
-              class="tab-btn"
-              :class="{ active: view === v.id }"
-            >
-              {{ v.name }}
-            </button>
-          </div>
-          
+          <button @click="navigateToday" class="btn-secondary today-btn" style="padding: 6px 14px; font-size: 13px;">
+            <svg class="today-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span class="today-text">Hoje</span>
+          </button>
+          <button @click="navigatePeriod('next')" class="nav-btn" title="Próximo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
         </div>
         
-        <div class="header-right">
-          
-          <!-- Search box -->
-          <div class="search-box">
-            <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
-            <input 
-              type="text" 
-              placeholder="Buscar compromisso..." 
-              v-model="searchQuery"
-              class="search-input"
-            />
-          </div>
-          
-          <!-- Create Event Primary Button -->
-          <button @click="openAddEventModal()" class="btn-primary">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>
-            <span>Novo Evento</span>
+        <!-- Large Context Title -->
+        <h2 class="current-period-title">
+          <span v-if="view === 'month' || view === 'list'">{{ formatMonthYear(currentDate) }}</span>
+          <span v-else-if="view === 'week'">
+            {{ formatDateShort(weekDays[0].date) }} — {{ formatDateShort(weekDays[6].date) }}
+          </span>
+          <span v-else-if="view === 'day'">{{ formatDateFull(selectedDate) }}</span>
+        </h2>
+        
+        <!-- Search box -->
+        <div class="search-box" @click="searchInput?.focus()">
+          <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <input 
+            ref="searchInput"
+            type="text" 
+            placeholder="Buscar compromisso..." 
+            v-model="searchQuery"
+            class="search-input"
+          />
+        </div>
+        
+        <!-- View selector tabs -->
+        <div class="view-selector-tabs">
+          <button 
+            v-for="v in views" 
+            :key="v.id"
+            @click="view = v.id"
+            class="tab-btn"
+            :class="{ active: view === v.id }"
+          >
+            {{ v.name }}
           </button>
-          
         </div>
         
       </header>
@@ -1138,6 +1133,11 @@ const saveEditSubcategory = (catId) => {
         </div>
         
       </section>
+      
+      <!-- Floating Action Button for creating events -->
+      <button @click="openAddEventModal()" class="fab-btn" title="Novo Evento">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>
+      </button>
       
     </main>
     
