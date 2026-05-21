@@ -6,6 +6,9 @@
 /**
  * Creates a date string relative to today.
  * @param {number} offsetDays
+ * @example
+ * relativeDate(0) // today's date string
+ * relativeDate(1) // tomorrow's date string
  * @returns {string} YYYY-MM-DD
  */
 function relativeDate(offsetDays) {

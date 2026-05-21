@@ -8,6 +8,9 @@ import { toDateString, parseDate } from './date.js'
 /**
  * @param {Date} current
  * @param {Object} r - Recurrence rule with freq='weekly', byDay, interval
+ * @example
+ * getNextWeeklyDate('2026-05-21', { freq: 'weekly', interval: 1, byDay: [1, 3, 5] })
+ * // { success: true, data: '2026-05-22', error: null }
  * @returns {{ success: boolean, data: Date|null, error: string|null }}
  */
 function getNextWeeklyDate(current, r) {
@@ -74,6 +77,9 @@ export function getNextRecurDate(current, r) {
  * @param {Object} r - Recurrence rule
  * @param {Date} rangeEndD
  * @param {Date} maxFuture
+ * @example
+ * computeRangeEnd('2026-05-21', { freq: 'daily', count: 5 }, '2026-06-01', '2027-05-21')
+ * // { success: true, data: '2026-05-26', error: null }
  * @returns {{ success: boolean, data: Date|null, error: string|null }}
  */
 function computeRangeEnd(start, r, rangeEndD, maxFuture) {
@@ -89,6 +95,9 @@ function computeRangeEnd(start, r, rangeEndD, maxFuture) {
  * @param {Object} event - Master event
  * @param {Object|null} exc - Exception override
  * @param {string} dStr - Instance date string (YYYY-MM-DD)
+ * @example
+ * buildInstanceObject(event, {}, '2026-05-21')
+ * // { success: true, data: { date: '2026-05-21', title: 'Reunião', ... }, error: null }
  * @returns {{ success: boolean, data: Object, error: string|null }}
  */
 function buildInstanceObject(event, exc, dStr) {
@@ -112,6 +121,9 @@ function buildInstanceObject(event, exc, dStr) {
  * @param {Date} end
  * @param {string} rangeStart - YYYY-MM-DD
  * @param {Object} event
+ * @example
+ * iterateRecurrenceLoop('2026-05-21', '2026-05-26', '2026-05-01', event)
+ * // { success: true, data: [{ date: '2026-05-21', ... }, ...], error: null }
  * @returns {{ success: boolean, data: Array<Object>, error: string|null }}
  */
 function iterateRecurrenceLoop(start, end, rangeStart, event) {
@@ -223,6 +235,9 @@ export function buildRecurrence(form) {
 /**
  * @param {number} masterId
  * @param {Array} events
+ * @example
+ * deleteSeries('evt-123', eventsArray)
+ * // { success: true, data: [...events without series], error: null }
  * @returns {{ success: boolean, data: Array, error: string|null }}
  */
 export function deleteSeries(masterId, events) {
@@ -241,6 +256,9 @@ export function deleteSeries(masterId, events) {
  * @param {number} masterId
  * @param {string} date - YYYY-MM-DD
  * @param {Array} events
+ * @example
+ * deleteOneInstance('evt-123', '2026-05-21', eventsArray)
+ * // { success: true, data: [...events with exception], error: null }
  * @returns {{ success: boolean, data: Array, error: string|null }}
  */
 export function deleteOneInstance(masterId, date, events) {
@@ -265,6 +283,9 @@ export function deleteOneInstance(masterId, date, events) {
  * @param {number} masterId
  * @param {Object} formData - The edited event form data
  * @param {Array} events
+ * @example
+ * editSeries('evt-123', { title: 'Novo título' }, eventsArray)
+ * // { success: true, data: [...updated events], error: null }
  * @returns {{ success: boolean, data: { events: Array, formData: Object, recurForm: Object }|null, error: string|null }}
  */
 export function editSeries(masterId, formData, events) {
@@ -301,6 +322,9 @@ export function editSeries(masterId, formData, events) {
  * @param {number} masterId
  * @param {string} date - Instance date YYYY-MM-DD
  * @param {Array} events
+ * @example
+ * editOneInstance('evt-123', '2026-05-21', eventsArray)
+ * // { success: true, data: [...events with edited instance], error: null }
  * @returns {{ success: boolean, data: { events: Array, formData: Object, editingDate: string }|null, error: string|null }}
  */
 export function editOneInstance(masterId, date, events) {
@@ -330,6 +354,9 @@ export function editOneInstance(masterId, date, events) {
  * @param {number} masterId
  * @param {string} targetDate - YYYY-MM-DD
  * @param {Array} events
+ * @example
+ * moveSeries('evt-123', '2026-06-01', eventsArray)
+ * // { success: true, data: [...events with moved series], error: null }
  * @returns {{ success: boolean, data: Array, error: string|null }}
  */
 export function moveSeries(masterId, targetDate, events) {
@@ -354,6 +381,9 @@ export function moveSeries(masterId, targetDate, events) {
  * @param {string} sourceDate - Original instance date YYYY-MM-DD
  * @param {string} targetDate - New date YYYY-MM-DD
  * @param {Array} events
+ * @example
+ * moveOneInstance('evt-123', '2026-05-21', '2026-05-22', eventsArray)
+ * // { success: true, data: [...events with moved instance], error: null }
  * @returns {{ success: boolean, data: Array, error: string|null }}
  */
 export function moveOneInstance(masterId, sourceDate, targetDate, events) {

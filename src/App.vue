@@ -277,8 +277,8 @@ const buildMonthData = (year, month) => {
 const initInfiniteScroll = () => {
   const result = calService.initInfiniteScrollData()
   if (result.success) {
-    monthsData.value = result.data
-    activeMonthIdx.value = result.activeIdx
+    monthsData.value = result.data.months
+    activeMonthIdx.value = result.data.activeIdx
   }
 }
 
@@ -345,127 +345,24 @@ const monthDays = computed(() => {
 })
 
 const weekDays = computed(() => {
-  const current = new Date(currentDate.value)
-  const currentDayOfWeek = current.getDay()
-  
-  const sunday = new Date(current)
-  sunday.setDate(current.getDate() - currentDayOfWeek)
-  
-  const days = []
-  const tempDate = new Date(sunday)
-  
-  for (let i = 0; i < 7; i++) {
-    const dStr = toDateString(tempDate)
-    const isToday = dStr === toDateString(new Date())
-    
-    days.push({
-      date: new Date(tempDate),
-      dayNumber: tempDate.getDate(),
-      dayName: getWeekDayName(i),
-      isToday,
-      dateString: dStr
-    })
-    tempDate.setDate(tempDate.getDate() + 1)
-  }
-  
-  return days
+  const result = calService.buildWeekDays(currentDate.value)
+  return result.success ? result.data : []
 })
 
 const miniCalendarDays = computed(() => {
-  const year = currentDate.value.getFullYear()
-  const month = currentDate.value.getMonth()
-  
-  const firstDay = new Date(year, month, 1)
-  const startDayOfWeek = firstDay.getDay()
-  
-  const startDate = new Date(firstDay)
-  startDate.setDate(firstDay.getDate() - startDayOfWeek)
-  
-  const cells = []
-  const tempDate = new Date(startDate)
-  
-  for (let i = 0; i < 35; i++) {
-    const dStr = toDateString(tempDate)
-    cells.push({
-      date: new Date(tempDate),
-      dayNumber: tempDate.getDate(),
-      isCurrentMonth: tempDate.getMonth() === month,
-      dateString: dStr
-    })
-    tempDate.setDate(tempDate.getDate() + 1)
-  }
-  
-  return cells
+  const result = calService.buildMiniCalendarDays(currentDate.value)
+  return result.success ? result.data : []
 })
 
 // --- Filtering Core logic ---
 const filteredEvents = computed(() => {
-  return events.value.filter(e => {
-    // Category filter
-    if (activeCategoryFilters.value[e.categoryId] === false) return false
-    
-    // Subcategory filter
-    if (activeSubcategoryFilters.value[e.subcategoryId] === false) return false
-    
-    // Search query
-    if (searchQuery.value.trim() !== '') {
-      const q = searchQuery.value.toLowerCase()
-      const titleMatch = e.title.toLowerCase().includes(q)
-      const descMatch = e.description ? e.description.toLowerCase().includes(q) : false
-      
-      const cat = categoriesData.value.find(c => c.id === e.categoryId)
-      const catMatch = cat ? cat.name.toLowerCase().includes(q) : false
-      
-      let subMatch = false
-      if (cat) {
-        const sub = cat.subcategories.find(s => s.id === e.subcategoryId)
-        subMatch = sub ? sub.name.toLowerCase().includes(q) : false
-      }
-      
-      if (!titleMatch && !descMatch && !catMatch && !subMatch) return false
-    }
-    
-    return true
-  }).sort((a, b) => {
-    if (a.date !== b.date) return a.date.localeCompare(b.date)
-    return a.timeStart.localeCompare(b.timeStart)
-  })
+  const result = euService.filterEvents(events.value, activeCategoryFilters.value, activeSubcategoryFilters.value, searchQuery.value, categoriesData.value)
+  return result.success ? result.data : []
 })
 
 const groupedEvents = computed(() => {
-  const groups = {}
-  const today = new Date()
-  const year = currentDate.value.getFullYear()
-  const month = currentDate.value.getMonth()
-  const firstOfMonth = new Date(year, month, 1)
-  const firstOfNext = new Date(year, month + 1, 1)
-  const rangeStart = toDateString(firstOfMonth)
-  const rangeEnd = toDateString(new Date(firstOfNext.getTime() - 1))
-
-  filteredEvents.value.forEach(e => {
-    const expanded = expandRecurrences(e, rangeStart, rangeEnd)
-    expanded.forEach(inst => {
-      if (!groups[inst.date]) {
-        groups[inst.date] = []
-      }
-      groups[inst.date].push(inst)
-    })
-  })
-
-  const sortedDates = Object.keys(groups).sort()
-  const result = []
-
-  sortedDates.forEach(dateStr => {
-    groups[dateStr].sort((a, b) => a.timeStart.localeCompare(b.timeStart))
-    const d = new Date(dateStr + 'T00:00:00')
-    result.push({
-      dateString: dateStr,
-      dateFormatted: formatDateFull(d),
-      events: groups[dateStr]
-    })
-  })
-
-  return result
+  const result = euService.groupEvents(filteredEvents.value, currentDate.value)
+  return result.success ? result.data : []
 })
 
 const getEventsForDate = (dateStr) => {
@@ -711,13 +608,9 @@ const getSubcategoriesForForm = () => {
 }
 
 const toggleDayChip = (idx) => {
-  const byDay = recurForm.value.byDay
-  const pos = byDay.indexOf(idx)
-  if (pos === -1) {
-    byDay.push(idx)
-    byDay.sort()
-  } else {
-    byDay.splice(pos, 1)
+  const result = euService.toggleDayChip(recurForm.value.byDay, idx)
+  if (result.success) {
+    recurForm.value.byDay = result.data
   }
 }
 
@@ -1048,7 +941,7 @@ const exportData = async (format) => {
   if (format === 'csv') {
     const csvResult = ioService.generateCSV(data)
     if (!csvResult.success) { addToast(csvResult.error, 'error'); return }
-    ioService.downloadBlob(csvResult.data, filename + '.csv', document, URL)
+    ioService.downloadBlob(csvResult.data, filename + '.csv', document, URL, Blob)
     addToast('Exportado como CSV com sucesso', 'success')
     return
   }

@@ -62,11 +62,17 @@ export function loadFromStorage(key, storage) {
  * Removes a key from a storage API.
  * @param {string} key
  * @param {Storage} storage
+ * @example
+ * removeFromStorage('sincronia_events', localStorage)
+ * // { success: true, data: null, error: null }
  * @returns {{ success: boolean, data: null, error: string|null }}
  */
 export function removeFromStorage(key, storage) {
   if (!key || typeof key !== 'string') {
     return { success: false, data: null, error: 'key é obrigatória' }
+  }
+  if (!storage || typeof storage.removeItem !== 'function') {
+    return { success: false, data: null, error: 'storage inválido' }
   }
   try {
     storage.removeItem(key)
@@ -104,6 +110,9 @@ export function generateCSV(data) {
  * @param {Array<Object>} data - Events as flat objects
  * @param {Array<Object>} categories
  * @param {Object} xlsxModule - The SheetJS module (from dynamic import)
+ * @example
+ * generateXLSX(events, categories, XLSX)
+ * // { success: true, data: workbook, error: null }
  * @returns {{ success: boolean, data: Object, error: string|null }}
  * data is the workbook (writable via XLSX.writeFile).
  */
@@ -212,6 +221,9 @@ export function computeResizeEnd(startEnd, deltaY, pixelsPerMinute = 0.8) {
 /**
  * Requests Notification permission if the API is available.
  * @param {Object} notifApi - The Notification object (typically `window.Notification`)
+ * @example
+ * requestNotificationPermission(Notification)
+ * // { success: true, data: null, error: null }
  * @returns {{ success: boolean, data: string, error: string|null }}
  * data returns the permission state: 'granted' | 'denied' | 'default'
  */
@@ -235,14 +247,18 @@ export function requestNotificationPermission(notifApi) {
  * @param {string} filename
  * @param {Document} doc
  * @param {Object} urlApi - Object with createObjectURL / revokeObjectURL (typically URL)
+ * @param {Function} BlobCtor - The Blob constructor (typically Blob)
+ * @example
+ * downloadBlob('data', 'file.csv', document, URL, Blob)
+ * // { success: true, data: null, error: null }
  * @returns {{ success: boolean, data: null, error: string|null }}
  */
-export function downloadBlob(csvString, filename, doc, urlApi) {
+export function downloadBlob(csvString, filename, doc, urlApi, BlobCtor) {
   if (!doc || typeof doc.createElement !== 'function') {
     return { success: false, data: null, error: 'document não disponível' }
   }
   try {
-    const blob = new Blob(['\ufeff' + csvString], { type: 'text/csv;charset=utf-8;' })
+    const blob = new BlobCtor(['\ufeff' + csvString], { type: 'text/csv;charset=utf-8;' })
     const url = urlApi.createObjectURL(blob)
     const a = doc.createElement('a')
     a.href = url
@@ -260,6 +276,9 @@ export function downloadBlob(csvString, filename, doc, urlApi) {
  * @param {Object} workbook - SheetJS workbook
  * @param {string} filename
  * @param {Object} xlsxModule
+ * @example
+ * downloadXLSX(workbook, 'file.xlsx', XLSX)
+ * // { success: true, data: null, error: null }
  * @returns {{ success: boolean, data: null, error: string|null }}
  */
 export function downloadXLSX(workbook, filename, xlsxModule) {
@@ -280,6 +299,9 @@ export function downloadXLSX(workbook, filename, xlsxModule) {
  * @param {string} body
  * @param {string} tag
  * @param {Object} notifApi
+ * @example
+ * fireNotification('Título', 'Descrição', 'tag-123', Notification)
+ * // { success: true, data: null, error: null }
  * @returns {{ success: boolean, data: null, error: string|null }}
  */
 export function fireNotification(title, body, tag, notifApi) {

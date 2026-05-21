@@ -12,6 +12,9 @@ import { toDateString, getWeekDayName } from './date.js'
  * @param {number} startDay - Day of week for 1st of month (0=Dom)
  * @param {number} daysInMonth
  * @param {number} prevMonthDays
+ * @example
+ * computeCellDate(2026, 4, 0, 5, 31, 30)
+ * // { success: true, data: { day: 26, month: 3, year: 2026, isCurrentMonth: false }, error: null }
  * @returns {{ success: boolean, data: { day: number, month: number, year: number, isCurrentMonth: boolean }, error: string|null }}
  */
 function computeCellDate(year, month, i, startDay, daysInMonth, prevMonthDays) {
@@ -45,6 +48,9 @@ function computeCellDate(year, month, i, startDay, daysInMonth, prevMonthDays) {
  * @param {number} cellDay
  * @param {boolean} isCurrentMonth
  * @param {string} todayStr
+ * @example
+ * buildCellObject(2026, 4, 15, true, '2026-05-15')
+ * // { success: true, data: { day: 15, dateString: '2026-05-15', isToday: true, isCurrentMonth: true }, error: null }
  * @returns {{ success: boolean, data: Object, error: string|null }}
  */
 function buildCellObject(cellYear, cellMonth, cellDay, isCurrentMonth, todayStr) {
@@ -198,10 +204,10 @@ export function buildMiniCalendarDays(currentDate) {
 
 /**
  * Initializes 3 months of data centered on the current month.
- * @returns {{ success: boolean, data: Array<Object>, activeIdx: number, error: string|null }}
+ * @returns {{ success: boolean, data: { months: Array<Object>, activeIdx: number }, error: string|null }}
  * @example
  * initInfiniteScrollData()
- * // { success: true, data: [{ year, month, cells }, ...], activeIdx: 1, error: null }
+ * // { success: true, data: { months: [{ year, month, cells }, ...], activeIdx: 1 }, error: null }
  */
 export function initInfiniteScrollData() {
   try {
@@ -214,9 +220,9 @@ export function initInfiniteScrollData() {
       buildMonthCells(currentYear, currentMonth + 1)
     ]
     const validMonths = months.filter(m => m.success).map(m => m.data)
-    return { success: true, data: validMonths, activeIdx: 1, error: null }
+    return { success: true, data: { months: validMonths, activeIdx: 1 }, error: null }
   } catch (err) {
-    return { success: false, data: [], activeIdx: 0, error: `initInfiniteScrollData: ${err.message}` }
+    return { success: false, data: { months: [], activeIdx: 0 }, error: `initInfiniteScrollData: ${err.message}` }
   }
 }
 
@@ -224,6 +230,8 @@ export function initInfiniteScrollData() {
  * Advances a date by one month (handles year wrap).
  * @param {number} year
  * @param {number} month
+ * @example
+ * nextMonth(2026, 4) // { success: true, data: { year: 2026, month: 5 }, error: null }
  * @returns {{ success: boolean, data: { year: number, month: number }, error: string|null }}
  */
 export function nextMonth(year, month) {
@@ -239,6 +247,8 @@ export function nextMonth(year, month) {
  * Retreats a date by one month (handles year wrap).
  * @param {number} year
  * @param {number} month
+ * @example
+ * prevMonth(2026, 0) // { success: true, data: { year: 2025, month: 11 }, error: null }
  * @returns {{ success: boolean, data: { year: number, month: number }, error: string|null }}
  */
 export function prevMonth(year, month) {

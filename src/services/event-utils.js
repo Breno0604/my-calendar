@@ -36,6 +36,9 @@ function computeMonthRange(currentDate) {
 /**
  * @param {string} catId
  * @param {Array<{ id: string, colorCode: string }>} categories
+ * @example
+ * getCategoryColor('trabalho', categories)
+ * // { success: true, data: '#4A90D9', error: null }
  * @returns {{ success: boolean, data: string, error: string|null }}
  */
 export function getCategoryColor(catId, categories) {
@@ -49,6 +52,9 @@ export function getCategoryColor(catId, categories) {
 /**
  * @param {string} catId
  * @param {Array<{ id: string, name: string }>} categories
+ * @example
+ * getCategoryName('trabalho', categories)
+ * // { success: true, data: 'Trabalho', error: null }
  * @returns {{ success: boolean, data: string, error: string|null }}
  */
 export function getCategoryName(catId, categories) {
@@ -63,6 +69,9 @@ export function getCategoryName(catId, categories) {
  * @param {string} catId
  * @param {string} subId
  * @param {Array<{ id: string, name: string, subcategories: Array<{ id: string, name: string }> }>} categories
+ * @example
+ * getSubcategoryName('trabalho', 'reuniao', categories)
+ * // { success: true, data: 'Reunião', error: null }
  * @returns {{ success: boolean, data: string, error: string|null }}
  */
 export function getSubcategoryName(catId, subId, categories) {
@@ -79,6 +88,9 @@ export function getSubcategoryName(catId, subId, categories) {
  * @param {string} catId
  * @param {Array} categories
  * @param {boolean} isDarkMode
+ * @example
+ * getEventStyle('trabalho', categories, false)
+ * // { success: true, data: { backgroundColor: '#4A90D9', borderLeft: '3px solid #4A90D9', color: '#fff' }, error: null }
  * @returns {{ success: boolean, data: Object, error: string|null }}
  */
 export function getEventStyle(catId, categories, isDarkMode) {
@@ -106,6 +118,9 @@ export function getEventStyle(catId, categories, isDarkMode) {
 /**
  * @param {string} catId
  * @param {Array} categories
+ * @example
+ * getEventCardStyle('trabalho', categories)
+ * // { success: true, data: { backgroundColor: '#4A90D9', color: '#fff' }, error: null }
  * @returns {{ success: boolean, data: Object, error: string|null }}
  */
 export function getEventCardStyle(catId, categories) {
@@ -122,6 +137,9 @@ export function getEventCardStyle(catId, categories) {
  * @param {Object} subcategoryFilters - { [subId]: boolean }
  * @param {string} searchQuery
  * @param {Array} categories
+ * @example
+ * filterEvents(events, { trabalho: true }, { reuniao: true }, 'reunião', categories)
+ * // { success: true, data: [matching events], error: null }
  * @returns {{ success: boolean, data: Array, error: string|null }}
  */
 export function filterEvents(events, categoryFilters, subcategoryFilters, searchQuery, categories) {
@@ -160,6 +178,9 @@ export function filterEvents(events, categoryFilters, subcategoryFilters, search
  * Groups filtered events by date, expanding recurrences.
  * @param {Array} events - Pre-filtered events
  * @param {Date} currentDate
+ * @example
+ * groupEvents(events, new Date(2026, 4, 1))
+ * // { success: true, data: [{ dateString: '2026-05-21', dateFormatted: '21 de maio', events: [...] }], error: null }
  * @returns {{ success: boolean, data: Array<{ dateString: string, dateFormatted: string, events: Array }>, error: string|null }}
  */
 export function groupEvents(events, currentDate) {
@@ -205,6 +226,9 @@ export function groupEvents(events, currentDate) {
  * Returns expanded events for a single date string.
  * @param {string} dateStr
  * @param {Array} events - Pre-filtered events
+ * @example
+ * getEventsForDate('2026-05-21', events)
+ * // { success: true, data: [events on that date], error: null }
  * @returns {{ success: boolean, data: Array, error: string|null }}
  */
 export function getEventsForDate(dateStr, events) {
@@ -233,6 +257,9 @@ export function getEventsForDate(dateStr, events) {
  * @param {Array} events - Full events array
  * @param {Object} categoryFilters
  * @param {Object} subcategoryFilters
+ * @example
+ * hasEventsOnDate('2026-05-21', events, { trabalho: true }, { reuniao: true })
+ * // { success: true, data: true, error: null }
  * @returns {{ success: boolean, data: boolean, error: string|null }}
  */
 export function hasEventsOnDate(dateStr, events, categoryFilters, subcategoryFilters) {
@@ -300,6 +327,9 @@ export function detectConflicts(dateStr, timeStart, timeEnd, excludeId, events) 
  * @param {Array} events
  * @param {string} today - YYYY-MM-DD
  * @param {number} currentMinutes - Minutes since midnight
+ * @example
+ * getEventsDueForReminder(events, '2026-05-21', 540)
+ * // { success: true, data: [events due for reminder], error: null }
  * @returns {{ success: boolean, data: Array, error: string|null }}
  */
 export function getEventsDueForReminder(events, today, currentMinutes) {
