@@ -586,6 +586,9 @@ const buildRecurrence = () => {
 
 const saveNewEvent = () => {
   if (!eventForm.value.title.trim()) return
+  if (!eventForm.value.date) { addToast('Selecione uma data', 'error'); return }
+  if (!eventForm.value.timeStart || !eventForm.value.timeEnd) { addToast('Preencha os horários', 'error'); return }
+  if (eventForm.value.timeEnd <= eventForm.value.timeStart) { addToast('Horário final deve ser após o inicial', 'error'); return }
 
   const newEv = {
     ...eventForm.value,
@@ -604,6 +607,9 @@ const saveNewEvent = () => {
 
 const saveEditedEvent = () => {
   if (!eventForm.value.title.trim()) return
+  if (!eventForm.value.date) { addToast('Selecione uma data', 'error'); return }
+  if (!eventForm.value.timeStart || !eventForm.value.timeEnd) { addToast('Preencha os horários', 'error'); return }
+  if (eventForm.value.timeEnd <= eventForm.value.timeStart) { addToast('Horário final deve ser após o inicial', 'error'); return }
 
   checkConflictsBeforeSave(() => {
     if (editingExceptionDate.value) {
