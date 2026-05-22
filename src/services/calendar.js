@@ -86,7 +86,7 @@ function buildCellObject(cellYear, cellMonth, cellDay, isCurrentMonth, todayStr)
  * buildMonthCells(2026, 4)
  * // { success: true, data: { year: 2026, month: 4, cells: [...] }, error: null }
  */
-export function buildMonthCells(year, month) {
+export function buildMonthCells(year, month, todayStr) {
   if (typeof year !== 'number' || typeof month !== 'number') {
     return { success: false, data: null, error: 'year e month devem ser números' }
   }
@@ -94,13 +94,15 @@ export function buildMonthCells(year, month) {
     return { success: false, data: null, error: 'month deve estar entre 0 e 11' }
   }
   try {
+    if (!todayStr) {
+      const r = toDateString(new Date())
+      if (!r.success) return { success: false, data: null, error: r.error }
+      todayStr = r.data
+    }
     const firstDay = new Date(year, month, 1)
     const startDay = firstDay.getDay()
     const daysInMonth = new Date(year, month + 1, 0).getDate()
     const prevMonthDays = new Date(year, month, 0).getDate()
-    const todayStrResult = toDateString(new Date())
-    if (!todayStrResult.success) return { success: false, data: null, error: todayStrResult.error }
-    const todayStr = todayStrResult.data
 
     const cells = []
     for (let i = 0; i < 42; i++) {
@@ -125,19 +127,20 @@ export function buildMonthCells(year, month) {
  * buildWeekDays(new Date('2026-05-21'))
  * // { success: true, data: [{ date, dayNumber, dayName, isToday, dateString }, ...], error: null }
  */
-export function buildWeekDays(currentDate) {
+export function buildWeekDays(currentDate, todayStr) {
   if (!(currentDate instanceof Date) || isNaN(currentDate.getTime())) {
     return { success: false, data: [], error: 'currentDate deve ser uma Date válida' }
   }
   try {
+    if (!todayStr) {
+      const r = toDateString(new Date())
+      if (!r.success) return { success: false, data: [], error: r.error }
+      todayStr = r.data
+    }
     const current = new Date(currentDate)
     const currentDayOfWeek = current.getDay()
     const sunday = new Date(current)
     sunday.setDate(current.getDate() - currentDayOfWeek)
-
-    const todayStrResult = toDateString(new Date())
-    if (!todayStrResult.success) return { success: false, data: [], error: todayStrResult.error }
-    const todayStr = todayStrResult.data
 
     const days = []
     const tempDate = new Date(sunday)
@@ -209,15 +212,15 @@ export function buildMiniCalendarDays(currentDate) {
  * initInfiniteScrollData()
  * // { success: true, data: { months: [{ year, month, cells }, ...], activeIdx: 1 }, error: null }
  */
-export function initInfiniteScrollData() {
+export function initInfiniteScrollData(todayStr) {
   try {
     const now = new Date()
     const currentYear = now.getFullYear()
     const currentMonth = now.getMonth()
     const months = [
-      buildMonthCells(currentYear, currentMonth - 1),
-      buildMonthCells(currentYear, currentMonth),
-      buildMonthCells(currentYear, currentMonth + 1)
+      buildMonthCells(currentYear, currentMonth - 1, todayStr),
+      buildMonthCells(currentYear, currentMonth, todayStr),
+      buildMonthCells(currentYear, currentMonth + 1, todayStr)
     ]
     const validMonths = months.filter(m => m.success).map(m => m.data)
     return { success: true, data: { months: validMonths, activeIdx: 1 }, error: null }

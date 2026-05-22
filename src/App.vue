@@ -7,6 +7,7 @@ import * as calService from './services/calendar.js'
 import * as euService from './services/event-utils.js'
 import * as mockService from './services/mock.js'
 import * as ioService from './services/io.js'
+import { version } from '../package.json'
 
 // --- State & Config ---
 const views = [
@@ -16,9 +17,25 @@ const views = [
   { id: 'list', name: 'Agenda' }
 ]
 
+const getInitialDate = () => {
+  try {
+    const fixed = localStorage.getItem('sincronia_fixedDate')
+    if (fixed) return new Date(fixed + 'T00:00:00')
+  } catch (e) { /* ignore */ }
+  return new Date()
+}
+
+const getTodayStr = () => {
+  try {
+    const fixed = localStorage.getItem('sincronia_fixedDate')
+    if (fixed) return fixed
+  } catch (e) { /* ignore */ }
+  return dateService.toDateString(new Date()).data || ''
+}
+
 const view = ref('month')
-const currentDate = ref(new Date())
-const selectedDate = ref(new Date())
+const currentDate = ref(getInitialDate())
+const selectedDate = ref(getInitialDate())
 const searchQuery = ref('')
 const searchInput = ref(null)
 const isDarkMode = ref(false)
@@ -95,6 +112,8 @@ const showEditModal = ref(false)
 const showSettingsModal = ref(false)
 const showRecurrenceConfirm = ref(false)
 const recurrencePending = ref(null)
+const showDeleteConfirm = ref(false)
+const pendingDeleteCatId = ref(null)
 const isSidebarOpen = ref(window.innerWidth > 1024)
 
 // --- Settings Environment Forms State ---
@@ -245,7 +264,7 @@ onMounted(() => {
 
   // Notification permission + reminder interval
   ioService.requestNotificationPermission(Notification)
-  reminderInterval = setInterval(checkReminders, 30000)
+  syncReminderInterval()
   checkReminders()
 })
 
@@ -270,12 +289,12 @@ const toggleTheme = () => {
 
 // --- Infinite Scroll ---
 const buildMonthData = (year, month) => {
-  const result = calService.buildMonthCells(year, month)
+  const result = calService.buildMonthCells(year, month, getTodayStr())
   return result.success ? result.data : { year, month, cells: [] }
 }
 
 const initInfiniteScroll = () => {
-  const result = calService.initInfiniteScrollData()
+  const result = calService.initInfiniteScrollData(getTodayStr())
   if (result.success) {
     monthsData.value = result.data.months
     activeMonthIdx.value = result.data.activeIdx
@@ -365,10 +384,34 @@ const groupedEvents = computed(() => {
   return result.success ? result.data : []
 })
 
-const getEventsForDate = (dateStr) => {
-  const result = euService.getEventsForDate(dateStr, filteredEvents.value)
-  return result.success ? result.data : []
-}
+const eventsByDate = computed(() => {
+  const map = {}
+  const today = getTodayStr()
+  const allDates = new Set()
+  for (const ev of filteredEvents.value) {
+    allDates.add(ev.date)
+    if (ev.recurrence) {
+      const rangeStart = dateService.toDateString(new Date(new Date(today).getFullYear() - 1, 0, 1)).data
+      const rangeEnd = dateService.toDateString(new Date(new Date(today).getFullYear() + 1, 11, 31)).data
+      const expandedResult = recurService.expandRecurrences(ev, rangeStart, rangeEnd)
+      if (expandedResult.success) {
+        for (const inst of expandedResult.data) {
+          if (!map[inst.date]) map[inst.date] = []
+          map[inst.date].push(inst)
+        }
+      }
+    } else {
+      if (!map[ev.date]) map[ev.date] = []
+      map[ev.date].push(ev)
+    }
+  }
+  for (const dateStr of Object.keys(map)) {
+    map[dateStr].sort((a, b) => a.timeStart.localeCompare(b.timeStart))
+  }
+  return map
+})
+
+const getEventsForDate = (dateStr) => eventsByDate.value[dateStr] || []
 
 const hasEventsOnDate = (dateStr) => {
   const result = euService.hasEventsOnDate(dateStr, events.value, activeCategoryFilters.value, activeSubcategoryFilters.value)
@@ -630,30 +673,36 @@ const addCategory = () => {
   addToast('Categoria criada com sucesso', 'success')
 }
 
+const confirmDeleteCategory = () => {
+  const catId = pendingDeleteCatId.value
+  if (!catId) return
+  categoriesData.value = categoriesData.value.filter(c => c.id !== catId)
+  delete activeCategoryFilters.value[catId]
+
+  const fallbackCatId = categoriesData.value[0].id
+  const fallbackSubId = categoriesData.value[0].subcategories[0]?.id || ''
+
+  events.value.forEach(e => {
+    if (e.categoryId === catId) {
+      e.categoryId = fallbackCatId
+      e.subcategoryId = fallbackSubId
+    }
+  })
+
+  saveToStorage()
+  saveCategoriesToStorage()
+  addToast('Categoria excluída com sucesso', 'success')
+  showDeleteConfirm.value = false
+  pendingDeleteCatId.value = null
+}
+
 const deleteCategory = (catId) => {
   if (categoriesData.value.length <= 1) {
-    alert('Você deve manter pelo menos uma categoria principal!')
+    addToast('Você deve manter pelo menos uma categoria principal!', 'error')
     return
   }
-  
-  if (confirm('Tem certeza que deseja excluir esta categoria? Todos os compromissos vinculados a ela serão redirecionados.')) {
-    categoriesData.value = categoriesData.value.filter(c => c.id !== catId)
-    delete activeCategoryFilters.value[catId]
-    
-    const fallbackCatId = categoriesData.value[0].id
-    const fallbackSubId = categoriesData.value[0].subcategories[0]?.id || ''
-    
-    events.value.forEach(e => {
-      if (e.categoryId === catId) {
-        e.categoryId = fallbackCatId
-        e.subcategoryId = fallbackSubId
-      }
-    })
-    
-    saveToStorage()
-    saveCategoriesToStorage()
-    addToast('Categoria excluída', 'info')
-  }
+  pendingDeleteCatId.value = catId
+  showDeleteConfirm.value = true
 }
 
 const addSubcategory = (catId) => {
@@ -912,6 +961,16 @@ const handleKeydown = (e) => {
 
 // --- Reminders ---
 let reminderInterval = null
+const syncReminderInterval = () => {
+  const hasReminders = events.value.some(e => e.reminder?.enabled)
+  if (hasReminders && !reminderInterval) {
+    reminderInterval = setInterval(checkReminders, 30000)
+    checkReminders()
+  } else if (!hasReminders && reminderInterval) {
+    clearInterval(reminderInterval)
+    reminderInterval = null
+  }
+}
 const checkReminders = () => {
   if (!('Notification' in window) || Notification.permission !== 'granted') return
   const today = toDateString(new Date())
@@ -924,6 +983,7 @@ const checkReminders = () => {
     ioService.fireNotification(e.title, `${e.timeStart} — ${e.description || 'Sem descrição'}`, 'sincronia-reminder-' + e.id, Notification)
   })
 }
+watch(events, syncReminderInterval, { deep: false })
 
 // --- Export / Import ---
 const exportData = async (format) => {
@@ -968,6 +1028,7 @@ const handleImportFile = (e) => {
     saveToStorage()
     addToast(`${parseResult.data.length} evento(s) importado(s) com sucesso`, 'success')
   }
+  reader.onerror = () => addToast('Erro ao ler arquivo. Verifique se é um CSV válido.', 'error')
   reader.readAsText(file)
   e.target.value = ''
 }
@@ -1060,7 +1121,7 @@ onUnmounted(() => {
         </div>
         
         <div style="font-size: 11px; color: var(--text-muted); font-weight: 500;">
-          MVP v1.0
+          Sincronia v{{ version }}
         </div>
       </footer>
     </aside>
@@ -1833,6 +1894,27 @@ onUnmounted(() => {
     </div>
 
     <!-- MODAL: SETTINGS (CONFIGURAÇÕES DE CATEGORIAS E SUBCATEGORIAS) -->
+    <div v-if="showDeleteConfirm" class="modal-overlay">
+      <div class="modal-content" style="max-width: 420px;">
+        <header class="modal-header">
+          <span class="modal-title">Excluir Categoria</span>
+          <button @click="showDeleteConfirm = false" class="modal-close-btn">&times;</button>
+        </header>
+        <div class="modal-body" style="padding: 20px;">
+          <p style="margin: 0 0 8px; font-size: 14px; color: var(--text-primary);">
+            Tem certeza que deseja excluir esta categoria?
+          </p>
+          <p style="margin: 0; font-size: 13px; color: var(--text-secondary);">
+            Todos os compromissos vinculados a ela serão redirecionados para a categoria padrão.
+          </p>
+        </div>
+        <footer class="modal-footer" style="display: flex; gap: 8px; justify-content: flex-end;">
+          <button @click="showDeleteConfirm = false" class="btn-secondary">Cancelar</button>
+          <button @click="confirmDeleteCategory" class="btn-danger">Excluir</button>
+        </footer>
+      </div>
+    </div>
+
     <div v-if="showSettingsModal" class="modal-overlay">
       <div class="modal-content" style="max-width: 600px; max-height: 85vh; display: flex; flex-direction: column;">
         <header class="modal-header">

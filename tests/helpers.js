@@ -10,7 +10,10 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
     localStorage.setItem('sincronia_events', JSON.stringify(args.events))
     localStorage.setItem('sincronia_categories', JSON.stringify(args.categories))
     localStorage.setItem('theme', args.theme)
-  }, { events, categories: categories || defaultCategories, theme })
+    if (args.fixedDate) {
+      localStorage.setItem('sincronia_fixedDate', args.fixedDate)
+    }
+  }, { events, categories: categories || defaultCategories, theme, fixedDate })
 }
 
 export async function openAddModal(page, dateStr = null) {
