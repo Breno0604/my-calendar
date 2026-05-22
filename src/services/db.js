@@ -94,7 +94,7 @@ export async function fetchEvents(supabase) {
 }
 
 /**
- * Upserts all events to Supabase.
+ * Syncs all events to Supabase (delete removed + upsert current).
  * @param {Object} supabase
  * @param {Array} events
  * @returns {Promise<{ success: boolean, data: null, error: string|null }>}
@@ -107,6 +107,16 @@ export async function saveEvents(supabase, events) {
     return { success: false, data: null, error: 'events deve ser um array' }
   }
   try {
+    const { data: existing, error: fetchError } = await supabase
+      .from('events')
+      .select('id')
+    if (fetchError) throw fetchError
+    const currentIds = new Set(events.map(e => e.id))
+    const toDelete = (existing || []).map(r => r.id).filter(id => !currentIds.has(id))
+    if (toDelete.length > 0) {
+      const { error: delError } = await supabase.from('events').delete().in('id', toDelete)
+      if (delError) throw delError
+    }
     const rows = events.map(mapEventToDb)
     const { error } = await supabase.from('events').upsert(rows, { onConflict: 'id', ignoreDuplicates: false })
     if (error) throw error
@@ -190,7 +200,7 @@ export async function fetchCategories(supabase) {
 }
 
 /**
- * Upserts all categories to Supabase.
+ * Syncs all categories to Supabase (delete removed + upsert current).
  * @param {Object} supabase
  * @param {Array} categories
  * @returns {Promise<{ success: boolean, data: null, error: string|null }>}
@@ -203,6 +213,16 @@ export async function saveCategories(supabase, categories) {
     return { success: false, data: null, error: 'categories deve ser um array' }
   }
   try {
+    const { data: existing, error: fetchError } = await supabase
+      .from('categories')
+      .select('id')
+    if (fetchError) throw fetchError
+    const currentIds = new Set(categories.map(c => c.id))
+    const toDelete = (existing || []).map(r => r.id).filter(id => !currentIds.has(id))
+    if (toDelete.length > 0) {
+      const { error: delError } = await supabase.from('categories').delete().in('id', toDelete)
+      if (delError) throw delError
+    }
     const rows = categories.map(mapCategoryToDb)
     const { error } = await supabase.from('categories').upsert(rows, { onConflict: 'id', ignoreDuplicates: false })
     if (error) throw error
