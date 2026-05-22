@@ -14,6 +14,25 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
       localStorage.setItem('sincronia_fixedDate', args.fixedDate)
     }
   }, { events, categories: categories || defaultCategories, theme, fixedDate })
+
+  // Intercept all requests to the mock Supabase endpoint so tests
+  // don't actually connect to 127.0.0.1:9999.
+  // GET → empty array (triggers localStorage fallback in the app).
+  // POST → continue (lets upstream handlers like interceptSupabase capture the data,
+  //         then falls through to the actual network — which will fail, but the app
+  //         catches the error and the data was already saved to localStorage).
+  // WebSocket etc. → abort.
+  await page.route('http://127.0.0.1:9999/**', async route => {
+    const url = route.request().url()
+    const method = route.request().method()
+    if (method === 'GET' && url.includes('/rest/v1/')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    } else if (method === 'POST' && url.includes('/rest/v1/')) {
+      await route.continue()
+    } else {
+      await route.abort('connectionrefused')
+    }
+  })
 }
 
 export async function openAddModal(page, dateStr = null) {
@@ -53,4 +72,26 @@ export async function editFirstEventCard(page) {
 
 export async function confirmRecurrenceAction(page, action) {
   await page.locator('.modal-content button', { hasText: action }).click()
+}
+
+/**
+ * Intercepts all requests to the mock Supabase REST API.
+ * GET requests return empty arrays (triggering localStorage fallback).
+ * POST requests are recorded in the `capture` array for assertions.
+ * @param {import('@playwright/test').Page} page
+ * @param {Array} capture - Array where intercepted POST bodies will be pushed
+ */
+export async function interceptSupabase(page, capture) {
+  await page.route('http://127.0.0.1:9999/rest/v1/**', async route => {
+    const method = route.request().method()
+    if (method === 'POST') {
+      const body = route.request().postDataJSON()
+      if (Array.isArray(body)) capture.push(body)
+    }
+    if (method === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    } else {
+      await route.fulfill({ status: 201, contentType: 'application/json', body: '[]' })
+    }
+  })
 }

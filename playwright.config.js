@@ -16,5 +16,9 @@ export default defineConfig({
     reuseExistingServer: true,
     stdout: 'pipe',
     stderr: 'pipe',
+    env: {
+      VITE_SUPABASE_URL: 'http://127.0.0.1:9999',
+      VITE_SUPABASE_PUBLISHABLE_KEY: 'test-mock-key'
+    }
   },
 })
