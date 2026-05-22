@@ -117,6 +117,34 @@ export async function saveEvents(supabase, events) {
 }
 
 /**
+ * Maps a Supabase row to the app's category shape (snake_case → camelCase).
+ * @param {Object} row
+ * @returns {Object}
+ */
+function mapCategoryFromDb(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    colorCode: row.color_code,
+    subcategories: row.subcategories || []
+  }
+}
+
+/**
+ * Maps an app category object to the Supabase row shape (camelCase → snake_case).
+ * @param {Object} cat
+ * @returns {Object}
+ */
+function mapCategoryToDb(cat) {
+  return {
+    id: cat.id,
+    name: cat.name,
+    color_code: cat.colorCode,
+    subcategories: cat.subcategories || []
+  }
+}
+
+/**
  * Loads all categories from Supabase with localStorage fallback.
  * @param {Object} supabase
  * @param {Object} [storage=localStorage]
@@ -129,7 +157,8 @@ export async function loadCategories(supabase, storage = localStorage) {
   try {
     const { data, error } = await supabase.from('categories').select('*')
     if (error) throw error
-    return { success: true, data: data || [], error: null }
+    const mapped = (data || []).map(mapCategoryFromDb)
+    return { success: true, data: mapped, error: null }
   } catch (err) {
     try {
       const raw = storage.getItem('sincronia_categories')
@@ -153,7 +182,8 @@ export async function fetchCategories(supabase) {
   try {
     const { data, error } = await supabase.from('categories').select('*')
     if (error) throw error
-    return { success: true, data: data || [], error: null }
+    const mapped = (data || []).map(mapCategoryFromDb)
+    return { success: true, data: mapped, error: null }
   } catch (err) {
     return { success: false, data: [], error: `fetchCategories: ${err.message}` }
   }
@@ -173,7 +203,8 @@ export async function saveCategories(supabase, categories) {
     return { success: false, data: null, error: 'categories deve ser um array' }
   }
   try {
-    const { error } = await supabase.from('categories').upsert(categories, { onConflict: 'id', ignoreDuplicates: false })
+    const rows = categories.map(mapCategoryToDb)
+    const { error } = await supabase.from('categories').upsert(rows, { onConflict: 'id', ignoreDuplicates: false })
     if (error) throw error
     return { success: true, data: null, error: null }
   } catch (err) {

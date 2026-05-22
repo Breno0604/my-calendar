@@ -56,7 +56,7 @@ create table categories (
 );
 
 create table events (
-  id bigint primary key generated always as identity,
+  id bigint primary key,
   title text not null,
   description text default '',
   date date not null,
@@ -153,7 +153,7 @@ create table categories (
 );
 
 create table events (
-  id bigint primary key generated always as identity,
+  id bigint primary key,
   title text not null,
   description text default '',
   date date not null,
