@@ -302,6 +302,47 @@ onMounted(() => {
   ioService.requestNotificationPermission(Notification)
   syncReminderInterval()
   checkReminders()
+
+  // --- Sync setup (multi-device) ---
+  if (sb) {
+    const shouldSync = () => !showModal.value
+
+    const doSync = () => {
+      if (!shouldSync()) return
+      dbService.fetchEvents(sb).then(r => {
+        if (r.success) {
+          events.value = r.data
+          ioService.saveToStorage('sincronia_events', events.value, localStorage)
+        }
+      })
+      dbService.fetchCategories(sb).then(r => {
+        if (r.success) {
+          categoriesData.value = r.data
+          ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
+        }
+      })
+    }
+
+    // Visibility change (tab switch)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') doSync()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    // Periodic polling (30s)
+    const pollId = setInterval(doSync, 30000)
+
+    // Realtime subscriptions
+    dbService.subscribeToTable(sb, 'events', doSync)
+    dbService.subscribeToTable(sb, 'categories', doSync)
+
+    // Cleanup on unmount
+    onUnmounted(() => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      clearInterval(pollId)
+      dbService.unsubscribeAll()
+    })
+  }
 })
 
 const saveToStorage = () => {

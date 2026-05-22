@@ -4,6 +4,9 @@
  * All functions follow the { success, data, error } contract pattern.
  */
 
+/** @type {Array<Object>} */
+const _channels = []
+
 /**
  * Maps a Supabase row to the app's event shape (snake_case → camelCase).
  * @param {Object} row
@@ -47,13 +50,10 @@ function mapEventToDb(e) {
 }
 
 /**
- * Loads all events from Supabase.
- * @param {Object} supabase - Supabase client instance
- * @param {Object} [storage=localStorage] - Fallback storage
+ * Loads all events from Supabase with localStorage fallback.
+ * @param {Object} supabase
+ * @param {Object} [storage=localStorage]
  * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
- * @example
- * await loadEvents(supabase)
- * // { success: true, data: [{ id: 1, title: 'Reunião', ... }], error: null }
  */
 export async function loadEvents(supabase, storage = localStorage) {
   if (!supabase || typeof supabase.from !== 'function') {
@@ -76,13 +76,28 @@ export async function loadEvents(supabase, storage = localStorage) {
 }
 
 /**
+ * Fetches events directly from Supabase (no fallback). Used for sync.
+ * @param {Object} supabase
+ * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
+ */
+export async function fetchEvents(supabase) {
+  if (!supabase || typeof supabase.from !== 'function') {
+    return { success: false, data: [], error: 'Supabase client inválido' }
+  }
+  try {
+    const { data, error } = await supabase.from('events').select('*').order('date', { ascending: true })
+    if (error) throw error
+    return { success: true, data: (data || []).map(mapEventFromDb), error: null }
+  } catch (err) {
+    return { success: false, data: [], error: `fetchEvents: ${err.message}` }
+  }
+}
+
+/**
  * Upserts all events to Supabase.
- * @param {Object} supabase - Supabase client instance
+ * @param {Object} supabase
  * @param {Array} events
  * @returns {Promise<{ success: boolean, data: null, error: string|null }>}
- * @example
- * await saveEvents(supabase, events)
- * // { success: true, data: null, error: null }
  */
 export async function saveEvents(supabase, events) {
   if (!supabase || typeof supabase.from !== 'function') {
@@ -102,13 +117,10 @@ export async function saveEvents(supabase, events) {
 }
 
 /**
- * Loads all categories from Supabase.
- * @param {Object} supabase - Supabase client instance
- * @param {Object} [storage=localStorage] - Fallback storage
+ * Loads all categories from Supabase with localStorage fallback.
+ * @param {Object} supabase
+ * @param {Object} [storage=localStorage]
  * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
- * @example
- * await loadCategories(supabase)
- * // { success: true, data: [{ id: 'trabalho', name: 'Trabalho', ... }], error: null }
  */
 export async function loadCategories(supabase, storage = localStorage) {
   if (!supabase || typeof supabase.from !== 'function') {
@@ -130,13 +142,28 @@ export async function loadCategories(supabase, storage = localStorage) {
 }
 
 /**
+ * Fetches categories directly from Supabase (no fallback). Used for sync.
+ * @param {Object} supabase
+ * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
+ */
+export async function fetchCategories(supabase) {
+  if (!supabase || typeof supabase.from !== 'function') {
+    return { success: false, data: [], error: 'Supabase client inválido' }
+  }
+  try {
+    const { data, error } = await supabase.from('categories').select('*')
+    if (error) throw error
+    return { success: true, data: data || [], error: null }
+  } catch (err) {
+    return { success: false, data: [], error: `fetchCategories: ${err.message}` }
+  }
+}
+
+/**
  * Upserts all categories to Supabase.
- * @param {Object} supabase - Supabase client instance
+ * @param {Object} supabase
  * @param {Array} categories
  * @returns {Promise<{ success: boolean, data: null, error: string|null }>}
- * @example
- * await saveCategories(supabase, categories)
- * // { success: true, data: null, error: null }
  */
 export async function saveCategories(supabase, categories) {
   if (!supabase || typeof supabase.from !== 'function') {
@@ -152,4 +179,40 @@ export async function saveCategories(supabase, categories) {
   } catch (err) {
     return { success: false, data: null, error: `saveCategories: ${err.message}` }
   }
+}
+
+/**
+ * Subscribes to realtime changes on a table.
+ * Calls `onChange` whenever a change is detected.
+ * @param {Object} supabase
+ * @param {string} table - 'events' or 'categories'
+ * @param {Function} onChange
+ * @returns {{ success: boolean, error: string|null }}
+ */
+export function subscribeToTable(supabase, table, onChange) {
+  if (!supabase || typeof supabase.channel !== 'function') {
+    return { success: false, error: 'Supabase client inválido' }
+  }
+  try {
+    const channel = supabase
+      .channel(`${table}-changes`)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+        onChange()
+      })
+      .subscribe()
+    _channels.push(channel)
+    return { success: true, error: null }
+  } catch (err) {
+    return { success: false, error: `subscribeToTable: ${err.message}` }
+  }
+}
+
+/**
+ * Unsubscribes all active realtime channels.
+ */
+export function unsubscribeAll() {
+  _channels.forEach(ch => {
+    try { ch.unsubscribe() } catch (_) {}
+  })
+  _channels.length = 0
 }
