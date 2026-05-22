@@ -311,41 +311,41 @@ onMounted(() => {
   if (sb) {
     const shouldSync = () => !showModal.value
 
-    const doSync = () => {
-      if (!shouldSync()) return
-      dbService.fetchEvents(sb).then(r => {
-        if (r.success && r.data.length > 0) {
-          events.value = r.data
-          ioService.saveToStorage('sincronia_events', events.value, localStorage)
-        }
-      })
-      dbService.fetchCategories(sb).then(r => {
-        if (r.success && r.data.length > 0) {
-          categoriesData.value = r.data
-          ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
-        }
-      })
+    let syncing = false
+    const doSync = async () => {
+      if (!shouldSync() || syncing) return
+      syncing = true
+      await Promise.all([
+        dbService.saveEvents(sb, events.value),
+        dbService.saveCategories(sb, categoriesData.value)
+      ])
+      const r = await Promise.all([
+        dbService.fetchEvents(sb),
+        dbService.fetchCategories(sb)
+      ])
+      if (r[0].success) {
+        events.value = r[0].data
+        ioService.saveToStorage('sincronia_events', events.value, localStorage)
+      }
+      if (r[1].success) {
+        categoriesData.value = r[1].data
+        ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
+      }
+      syncing = false
     }
 
     // Visibility change (tab switch)
-    const onVisibility = () => {
+    onVisibility = () => {
       if (document.visibilityState === 'visible') doSync()
     }
     document.addEventListener('visibilitychange', onVisibility)
 
     // Periodic polling (30s)
-    const pollId = setInterval(doSync, 30000)
+    pollId = setInterval(doSync, 30000)
 
     // Realtime subscriptions
     dbService.subscribeToTable(sb, 'events', doSync)
     dbService.subscribeToTable(sb, 'categories', doSync)
-
-    // Cleanup on unmount
-    onUnmounted(() => {
-      document.removeEventListener('visibilitychange', onVisibility)
-      clearInterval(pollId)
-      dbService.unsubscribeAll()
-    })
   }
 })
 
@@ -1044,6 +1044,10 @@ const handleKeydown = (e) => {
   }
 }
 
+// --- Sync state ---
+let pollId = null
+let onVisibility = null
+
 // --- Reminders ---
 let reminderInterval = null
 const syncReminderInterval = () => {
@@ -1121,6 +1125,9 @@ const handleImportFile = (e) => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   if (reminderInterval) clearInterval(reminderInterval)
+  document.removeEventListener('visibilitychange', onVisibility)
+  if (pollId) clearInterval(pollId)
+  dbService.unsubscribeAll()
 })
 </script>
 

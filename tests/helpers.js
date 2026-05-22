@@ -76,21 +76,31 @@ export async function confirmRecurrenceAction(page, action) {
 
 /**
  * Intercepts all requests to the mock Supabase REST API.
- * GET requests return empty arrays (triggering localStorage fallback).
- * POST requests are recorded in the `capture` array for assertions.
+ * GET `select=id` returns `initialIds` (default `[]`).
+ * Other GET requests return empty arrays (triggering localStorage fallback).
+ * POST bodies are recorded in the `capture` array for assertions.
  * @param {import('@playwright/test').Page} page
  * @param {Array} capture - Array where intercepted POST bodies will be pushed
+ * @param {Object} [options]
+ * @param {Array<{id: number|string}>} [options.initialEventIds] - IDs returned for GET events?select=id
+ * @param {Array<{id: string}>} [options.initialCategoryIds] - IDs returned for GET categories?select=id
  */
-export async function interceptSupabase(page, capture) {
+export async function interceptSupabase(page, capture, options = {}) {
+  const { initialEventIds = [], initialCategoryIds = [] } = options
   await page.route('http://127.0.0.1:9999/rest/v1/**', async route => {
+    const url = route.request().url()
     const method = route.request().method()
-    if (method === 'POST') {
-      const body = route.request().postDataJSON()
-      if (Array.isArray(body)) capture.push(body)
-    }
-    if (method === 'GET') {
+    if (method === 'GET' && url.includes('events?select=id')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(initialEventIds) })
+    } else if (method === 'GET' && url.includes('categories?select=id')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(initialCategoryIds) })
+    } else if (method === 'GET') {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
     } else {
+      if (method === 'POST') {
+        const body = route.request().postDataJSON()
+        if (Array.isArray(body)) capture.push(body)
+      }
       await route.fulfill({ status: 201, contentType: 'application/json', body: '[]' })
     }
   })

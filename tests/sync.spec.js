@@ -108,3 +108,25 @@ test('S5: editar categoria envia nome atualizado ao Supabase', async ({ page }) 
   expect(editada).toBeDefined()
   expect(editada.name).toBe('Pessoal Editado')
 })
+
+test('S6: excluir evento dispara DELETE ao Supabase com ID correto', async ({ page }) => {
+  const supabaseData = []
+  await interceptSupabase(page, supabaseData, { initialEventIds: [{ id: 1 }] })
+  await page.goto('/')
+
+  await page.locator('.event-capsule, .event-card').first().click()
+
+  const [delRequest, postRequest] = await Promise.all([
+    page.waitForRequest(req => req.url().includes('/rest/v1/events') && req.method() === 'DELETE'),
+    page.waitForRequest(req => req.url().includes('/rest/v1/events') && req.method() === 'POST'),
+    page.locator('.modal-footer .btn-danger').click()
+  ])
+
+  const delUrl = delRequest.url()
+  expect(delUrl).toContain('id=in.')
+  expect(delUrl).toContain('1')
+
+  const body = postRequest.postDataJSON()
+  expect(Array.isArray(body)).toBeTruthy()
+  expect(body.some(e => e.id === 1)).toBeFalsy()
+})
