@@ -305,11 +305,13 @@ onMounted(() => {
 })
 
 const saveToStorage = () => {
+  ioService.saveToStorage('sincronia_events', events.value, localStorage)
   const sb = getSupabase()
   if (sb) dbService.saveEvents(sb, events.value)
 }
 
 const saveCategoriesToStorage = () => {
+  ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
   const sb = getSupabase()
   if (sb) dbService.saveCategories(sb, categoriesData.value)
 }
