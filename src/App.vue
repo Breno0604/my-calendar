@@ -7,6 +7,8 @@ import * as calService from './services/calendar.js'
 import * as euService from './services/event-utils.js'
 import * as mockService from './services/mock.js'
 import * as ioService from './services/io.js'
+import * as dbService from './services/db.js'
+import { getSupabase } from './lib/supabaseClient.js'
 import { version } from '../package.json'
 
 // --- State & Config ---
@@ -236,24 +238,56 @@ onMounted(() => {
     document.documentElement.classList.remove('dark')
   }
 
-  // Load Categories
-  const savedResult = ioService.loadFromStorage('sincronia_categories', localStorage)
-  if (savedResult.success && savedResult.data) {
-    categoriesData.value = savedResult.data
-  } else {
-    saveCategoriesToStorage()
-  }
-  
   // Initialize filters map
   initializeFilters()
 
-  // Load Events from LocalStorage or generate Mock Events
-  const savedEventsResult = ioService.loadFromStorage('sincronia_events', localStorage)
-  if (savedEventsResult.success && savedEventsResult.data) {
-    events.value = savedEventsResult.data
+  // Load Categories from Supabase (fallback to localStorage)
+  const sb = getSupabase()
+  if (sb) {
+    dbService.loadCategories(sb, localStorage).then(result => {
+      if (result.success && result.data.length > 0) {
+        categoriesData.value = result.data
+      } else {
+        const localResult = ioService.loadFromStorage('sincronia_categories', localStorage)
+        if (localResult.success && localResult.data) {
+          categoriesData.value = localResult.data
+        } else {
+          saveCategoriesToStorage()
+        }
+      }
+    })
   } else {
-    events.value = generateMockEvents()
-    saveToStorage()
+    const localResult = ioService.loadFromStorage('sincronia_categories', localStorage)
+    if (localResult.success && localResult.data) {
+      categoriesData.value = localResult.data
+    } else {
+      saveCategoriesToStorage()
+    }
+  }
+
+  // Load Events from Supabase (fallback to localStorage)
+  if (sb) {
+    dbService.loadEvents(sb, localStorage).then(result => {
+      if (result.success && result.data.length > 0) {
+        events.value = result.data
+      } else {
+        const localResult = ioService.loadFromStorage('sincronia_events', localStorage)
+        if (localResult.success && localResult.data) {
+          events.value = localResult.data
+        } else {
+          events.value = generateMockEvents()
+          saveToStorage()
+        }
+      }
+    })
+  } else {
+    const localResult = ioService.loadFromStorage('sincronia_events', localStorage)
+    if (localResult.success && localResult.data) {
+      events.value = localResult.data
+    } else {
+      events.value = generateMockEvents()
+      saveToStorage()
+    }
   }
 
   // Initialize infinite scroll months
@@ -270,10 +304,14 @@ onMounted(() => {
 
 const saveToStorage = () => {
   ioService.saveToStorage('sincronia_events', events.value, localStorage)
+  const sb = getSupabase()
+  if (sb) dbService.saveEvents(sb, events.value)
 }
 
 const saveCategoriesToStorage = () => {
   ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
+  const sb = getSupabase()
+  if (sb) dbService.saveCategories(sb, categoriesData.value)
 }
 
 const toggleTheme = () => {
