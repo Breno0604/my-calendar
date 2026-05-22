@@ -11,7 +11,7 @@ test('A1: app loads without errors', async ({ page }) => {
   page.on('pageerror', err => errors.push(err.message))
   page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()) })
   await page.goto('/')
-  await page.waitForLoadState('networkidle')
+  await page.waitForLoadState('load')
   await page.screenshot({ path: 'test-results/app-A1-debug.png' })
   const html = await page.content()
   if (errors.length > 0) console.log('Page errors:', errors)

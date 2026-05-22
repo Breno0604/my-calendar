@@ -22,7 +22,7 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
   //         then falls through to the actual network — which will fail, but the app
   //         catches the error and the data was already saved to localStorage).
   // WebSocket etc. → abort.
-  await page.route('http://127.0.0.1:9999/**', async route => {
+  await page.route(/127\.0\.0\.1:9999/, async route => {
     const url = route.request().url()
     const method = route.request().method()
     if (method === 'GET' && url.includes('/rest/v1/')) {
