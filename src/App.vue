@@ -133,6 +133,10 @@ const showSeriesModal = ref(false)
 const seriesEvent = ref(null)
 const seriesInstances = ref([])
 
+const showModal = computed(() =>
+  showAddModal.value || showEditModal.value || showSettingsModal.value || showRecurrenceConfirm.value || showSeriesModal.value
+)
+
 // --- Drag & Drop State ---
 const draggedEvent = ref(null)
 const dragOverDate = ref(null)
@@ -310,13 +314,13 @@ onMounted(() => {
     const doSync = () => {
       if (!shouldSync()) return
       dbService.fetchEvents(sb).then(r => {
-        if (r.success) {
+        if (r.success && r.data.length > 0) {
           events.value = r.data
           ioService.saveToStorage('sincronia_events', events.value, localStorage)
         }
       })
       dbService.fetchCategories(sb).then(r => {
-        if (r.success) {
+        if (r.success && r.data.length > 0) {
           categoriesData.value = r.data
           ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
         }
