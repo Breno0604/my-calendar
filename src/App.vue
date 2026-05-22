@@ -241,7 +241,7 @@ onMounted(() => {
   // Initialize filters map
   initializeFilters()
 
-  // Load Categories from Supabase (fallback to localStorage)
+  // Load Categories from Supabase (fallback to localStorage + migrate)
   const sb = getSupabase()
   if (sb) {
     dbService.loadCategories(sb, localStorage).then(result => {
@@ -251,6 +251,7 @@ onMounted(() => {
         const localResult = ioService.loadFromStorage('sincronia_categories', localStorage)
         if (localResult.success && localResult.data) {
           categoriesData.value = localResult.data
+          dbService.saveCategories(sb, categoriesData.value)
         } else {
           saveCategoriesToStorage()
         }
@@ -265,7 +266,7 @@ onMounted(() => {
     }
   }
 
-  // Load Events from Supabase (fallback to localStorage)
+  // Load Events from Supabase (fallback to localStorage + migrate)
   if (sb) {
     dbService.loadEvents(sb, localStorage).then(result => {
       if (result.success && result.data.length > 0) {
@@ -274,6 +275,7 @@ onMounted(() => {
         const localResult = ioService.loadFromStorage('sincronia_events', localStorage)
         if (localResult.success && localResult.data) {
           events.value = localResult.data
+          dbService.saveEvents(sb, events.value)
         } else {
           events.value = generateMockEvents()
           saveToStorage()
