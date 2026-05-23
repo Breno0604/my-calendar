@@ -130,3 +130,32 @@ test('S6: excluir evento dispara DELETE ao Supabase com ID correto', async ({ pa
   expect(Array.isArray(body)).toBeTruthy()
   expect(body.some(e => e.id === 1)).toBeFalsy()
 })
+
+test('S7: sync preserves local events when Supabase fetch returns empty (stale)', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
+
+  // Stage 1: initial load with existing event
+  await page.goto('/')
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).toBeVisible()
+
+  // Stage 2: create a new event and wait for toast
+  await page.locator('.day-cell').filter({ hasText: '22' }).locator('.add-event-inline-btn').click()
+  await page.locator('.modal-body input[type="text"]').first().fill('Evento Sync Safe')
+  await page.locator('.modal-body input[type="time"]').first().fill('14:00')
+  await page.locator('.modal-body input[type="time"]').last().fill('15:00')
+  await page.locator('.modal-footer .btn-primary').click()
+  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Sync Safe' })).toBeVisible()
+
+  // Stage 3: trigger doSync while intercept returns empty GET (simulating stale Supabase)
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.waitForTimeout(1000)
+
+  // Stage 4: local events should still be intact (not overwritten by empty Supabase data)
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Sync Safe' })).toBeVisible()
+})

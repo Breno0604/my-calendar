@@ -37,3 +37,13 @@ test('E4: categorias sobrevivem reload', async ({ page }) => {
   await page.reload()
   await expect(page.locator('.category-name-text').first()).toBeVisible()
 })
+
+test('E5: evento sobrevive reload mesmo com Supabase vazio (stale)', async ({ page }) => {
+  await seedStorage(page, {
+    events: [{ id: 33, title: 'SalvoLocal', description: '', date: '2026-05-21', timeStart: '10:00', timeEnd: '11:00', categoryId: 'pessoal', subcategoryId: 'lazer', recurrence: null, exceptions: {} }]
+  })
+  await page.goto('/')
+  await expect(page.locator('.event-capsule').filter({ hasText: 'SalvoLocal' })).toBeVisible()
+  await page.reload()
+  await expect(page.locator('.event-capsule').filter({ hasText: 'SalvoLocal' })).toBeVisible()
+})

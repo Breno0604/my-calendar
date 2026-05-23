@@ -133,3 +133,24 @@ test('H16: série completa lista instâncias corretas', async ({ page }) => {
   const rows = page.locator('.series-instance-row')
   await expect(rows.first()).toBeVisible()
 })
+
+test('F1: evento salvo persiste no localStorage', async ({ page }) => {
+  await seedStorage(page)
+  await page.goto('/')
+
+  // Create a new event
+  await page.locator('.day-cell').filter({ hasText: '22' }).locator('.add-event-inline-btn').click()
+  await page.locator('.modal-body input[type="text"]').first().fill('Evento F1')
+  await page.locator('.modal-body input[type="time"]').first().fill('09:00')
+  await page.locator('.modal-body input[type="time"]').last().fill('10:00')
+  await page.locator('.modal-footer .btn-primary').click()
+  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+  await expect(page.locator('.event-capsule, .event-card').filter({ hasText: 'Evento F1' })).toBeVisible()
+
+  // Verify event is persisted to localStorage
+  const stored = await page.evaluate(() => {
+    const raw = localStorage.getItem('sincronia_events')
+    return raw ? JSON.parse(raw) : []
+  })
+  expect(stored.some(e => e.title === 'Evento F1')).toBeTruthy()
+})

@@ -245,55 +245,39 @@ onMounted(() => {
   // Initialize filters map
   initializeFilters()
 
-  // Load Categories from Supabase (fallback to localStorage + migrate)
+  // Load Categories: localStorage first (source of truth), Supabase as enrichment
   const sb = getSupabase()
-  if (sb) {
+  const localCatResult = ioService.loadFromStorage('sincronia_categories', localStorage)
+  if (localCatResult.success && localCatResult.data) {
+    categoriesData.value = localCatResult.data
+  } else if (sb) {
     dbService.loadCategories(sb, localStorage).then(result => {
       if (result.success && result.data.length > 0) {
         categoriesData.value = result.data
       } else {
-        const localResult = ioService.loadFromStorage('sincronia_categories', localStorage)
-        if (localResult.success && localResult.data) {
-          categoriesData.value = localResult.data
-          dbService.saveCategories(sb, categoriesData.value)
-        } else {
-          saveCategoriesToStorage()
-        }
+        saveCategoriesToStorage()
       }
     })
   } else {
-    const localResult = ioService.loadFromStorage('sincronia_categories', localStorage)
-    if (localResult.success && localResult.data) {
-      categoriesData.value = localResult.data
-    } else {
-      saveCategoriesToStorage()
-    }
+    saveCategoriesToStorage()
   }
 
-  // Load Events from Supabase (fallback to localStorage + migrate)
-  if (sb) {
+  // Load Events: localStorage first (source of truth), Supabase as enrichment
+  const localEventsResult = ioService.loadFromStorage('sincronia_events', localStorage)
+  if (localEventsResult.success && localEventsResult.data) {
+    events.value = localEventsResult.data
+  } else if (sb) {
     dbService.loadEvents(sb, localStorage).then(result => {
       if (result.success && result.data.length > 0) {
         events.value = result.data
       } else {
-        const localResult = ioService.loadFromStorage('sincronia_events', localStorage)
-        if (localResult.success && localResult.data) {
-          events.value = localResult.data
-          dbService.saveEvents(sb, events.value)
-        } else {
-          events.value = generateMockEvents()
-          saveToStorage()
-        }
+        events.value = generateMockEvents()
+        saveToStorage()
       }
     })
   } else {
-    const localResult = ioService.loadFromStorage('sincronia_events', localStorage)
-    if (localResult.success && localResult.data) {
-      events.value = localResult.data
-    } else {
-      events.value = generateMockEvents()
-      saveToStorage()
-    }
+    events.value = generateMockEvents()
+    saveToStorage()
   }
 
   // Initialize infinite scroll months
@@ -315,7 +299,7 @@ onMounted(() => {
     const doSync = async () => {
       if (!shouldSync() || syncing) return
       syncing = true
-      await Promise.all([
+      const [saveEventsResult, saveCategoriesResult] = await Promise.all([
         dbService.saveEvents(sb, events.value),
         dbService.saveCategories(sb, categoriesData.value)
       ])
@@ -323,11 +307,13 @@ onMounted(() => {
         dbService.fetchEvents(sb),
         dbService.fetchCategories(sb)
       ])
-      if (r[0].success) {
+      // Only replace local data if the SAVE to Supabase succeeded
+      // AND fetched data is non-empty (avoid overwriting with stale/empty data).
+      if (saveEventsResult.success && r[0].success && r[0].data.length > 0) {
         events.value = r[0].data
         ioService.saveToStorage('sincronia_events', events.value, localStorage)
       }
-      if (r[1].success) {
+      if (saveCategoriesResult.success && r[1].success && r[1].data.length > 0) {
         categoriesData.value = r[1].data
         ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
       }
@@ -349,16 +335,26 @@ onMounted(() => {
   }
 })
 
-const saveToStorage = () => {
+const saveToStorage = async () => {
   ioService.saveToStorage('sincronia_events', events.value, localStorage)
   const sb = getSupabase()
-  if (sb) dbService.saveEvents(sb, events.value)
+  if (sb) {
+    const result = await dbService.saveEvents(sb, events.value)
+    if (!result.success) {
+      addToast('Erro ao salvar no Supabase. Dados salvos localmente.', 'warning', 5000)
+    }
+  }
 }
 
-const saveCategoriesToStorage = () => {
+const saveCategoriesToStorage = async () => {
   ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
   const sb = getSupabase()
-  if (sb) dbService.saveCategories(sb, categoriesData.value)
+  if (sb) {
+    const result = await dbService.saveCategories(sb, categoriesData.value)
+    if (!result.success) {
+      addToast('Erro ao salvar categorias no Supabase. Dados salvos localmente.', 'warning', 5000)
+    }
+  }
 }
 
 const toggleTheme = () => {
@@ -1752,7 +1748,7 @@ onUnmounted(() => {
 
         <footer class="modal-footer">
           <button @click="showAddModal = false" class="btn-secondary">Cancelar</button>
-          <button @click="saveNewEvent" :disabled="!eventForm.title.trim()" class="btn-primary">
+          <button type="button" @click="saveNewEvent" :disabled="!eventForm.title.trim()" class="btn-primary">
             Salvar
           </button>
         </footer>
@@ -1924,7 +1920,7 @@ onUnmounted(() => {
         <footer class="modal-footer">
           <button @click="handleDeleteClick" class="btn-danger">Excluir</button>
           <button @click="closeEditModal" class="btn-secondary">Cancelar</button>
-          <button @click="saveEditedEvent" :disabled="!eventForm.title.trim()" class="btn-primary">
+          <button type="button" @click="saveEditedEvent" :disabled="!eventForm.title.trim()" class="btn-primary">
             Atualizar
           </button>
         </footer>
