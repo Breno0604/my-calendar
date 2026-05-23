@@ -353,8 +353,12 @@ onMounted(() => {
   }
 })
 
-const saveToStorage = () => {
+const saveToStorage = async () => {
   ioService.saveToStorage('sincronia_events', events.value, localStorage)
+  const sb = getSupabase()
+  if (sb) {
+    await dbService.saveEvents(sb, events.value).catch(() => {})
+  }
 }
 
 const saveCategoriesToStorage = async () => {
@@ -741,7 +745,7 @@ const handleRecurrenceConfirm = (choice) => {
       : deleteOneInstance(event._masterId, event.date, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
+    saveToStorage()
     addToast(choice === 'all' ? 'Série de compromissos excluída' : 'Ocorrência excluída', 'success')
     showEditModal.value = false
   } else if (action === 'edit') {
@@ -763,7 +767,7 @@ const handleRecurrenceConfirm = (choice) => {
       : moveOneInstance(event._masterId, event.date, event.proposedDate, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
+    saveToStorage()
     addToast('Compromisso movido para ' + event.proposedDate, 'success')
   }
 
