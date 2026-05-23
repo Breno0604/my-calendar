@@ -233,7 +233,6 @@ const generateMockEvents = () => {
 }
 
 // --- Lifecycle & Persistence ---
-let dirty = false
 
 onMounted(() => {
   // Load Dark Mode Preference
@@ -254,8 +253,6 @@ onMounted(() => {
   const localCatResult = ioService.loadFromStorage('sincronia_categories', localStorage)
   if (localCatResult.success && localCatResult.data) {
     categoriesData.value = localCatResult.data
-    // Fire-and-forget push to Supabase — dirty flag prevents doSync from
-    // overwriting if the push hasn't completed yet.
     saveCategoriesToStorage()
   } else if (sb) {
     dbService.loadCategories(sb, localStorage).then(result => {
@@ -312,34 +309,19 @@ onMounted(() => {
       if (!shouldSync() || syncing) return
       syncing = true
 
-      // Pull-merge: fetch remote data, merge with local.
-      // Never push local state — that is saveToStorage's job.
-      // When remote is empty we keep local data — it could be a transient
-      // network issue, not an actual deletion.
       const r = await Promise.all([
         dbService.fetchEvents(sb),
         dbService.fetchCategories(sb)
       ])
 
       if (r[0].success && r[0].data.length > 0) {
-        if (dirty) {
-          // Merge: add remote events not in local, keep all local events.
-          const localIds = new Set(events.value.map(e => e.id))
-          events.value = [...events.value, ...r[0].data.filter(e => !localIds.has(e.id))]
-        } else {
-          // No unsaved changes: full replace (propagates adds AND deletes).
-          events.value = r[0].data
-        }
+        events.value = pendingOpsService.applyPendingOps(localStorage, r[0].data)
         ioService.saveToStorage('sincronia_events', events.value, localStorage)
+        processPendingOps()
       }
 
       if (r[1].success && r[1].data.length > 0) {
-        if (dirty) {
-          const localIds = new Set(categoriesData.value.map(c => c.id))
-          categoriesData.value = [...categoriesData.value, ...r[1].data.filter(c => !localIds.has(c.id))]
-        } else {
-          categoriesData.value = r[1].data
-        }
+        categoriesData.value = r[1].data
         ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
       }
       syncing = false
@@ -371,37 +353,15 @@ onMounted(() => {
   }
 })
 
-let _saveGen = 0
-
-const saveToStorage = async () => {
-  const gen = ++_saveGen
-  dirty = true
+const saveToStorage = () => {
   ioService.saveToStorage('sincronia_events', events.value, localStorage)
-  const sb = getSupabase()
-  if (sb) {
-    const result = await dbService.saveEvents(sb, events.value)
-    if (gen === _saveGen) {
-      dirty = result.success ? false : true
-    }
-  } else {
-    if (gen === _saveGen) dirty = false
-  }
 }
 
-let _catSaveGen = 0
-
 const saveCategoriesToStorage = async () => {
-  const gen = ++_catSaveGen
-  dirty = true
   ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
   const sb = getSupabase()
   if (sb) {
-    const result = await dbService.saveCategories(sb, categoriesData.value)
-    if (gen === _catSaveGen) {
-      dirty = result.success ? false : true
-    }
-  } else {
-    if (gen === _catSaveGen) dirty = false
+    await dbService.saveCategories(sb, categoriesData.value).catch(() => {})
   }
 }
 

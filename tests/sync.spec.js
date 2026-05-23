@@ -210,12 +210,12 @@ test('S9: doSync pull remove evento deletado remotamente por outro device', asyn
   await expect(eventCards.filter({ hasText: 'Evento Substituído' })).toBeVisible()
 })
 
-test('S10: dirty guard preserva evento local quando saveToStorage falha', async ({ page }) => {
+test('S10: pendingOp create preserva evento local quando Supabase falha', async ({ page }) => {
   const capture = []
   await interceptSupabase(page, capture)
   await page.goto('/')
 
-  // Make saveToStorage POST fail so dirty stays true
+  // Fail all POST to events so the create is queued as pendingOp
   await page.route(/rest\/v1\/events/, async route => {
     if (route.request().method() === 'POST') {
       await route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"erro"}' })
@@ -236,8 +236,8 @@ test('S10: dirty guard preserva evento local quando saveToStorage falha', async 
   const eventCards = page.locator('.event-capsule, .event-card')
   await expect(eventCards.filter({ hasText: 'Evento Local' })).toBeVisible()
 
-  // Register GET handler for doSync — remote has only the base event (no "Evento Local")
-  await page.route('**/rest/v1/events?select=*&order=date.asc', async route => {
+  // Override GET events for doSync — remote has only the base event (no "Evento Local")
+  await page.route(/rest\/v1\/events\?select=\*&order=date\.asc/, async route => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -247,10 +247,129 @@ test('S10: dirty guard preserva evento local quando saveToStorage falha', async 
     })
   })
 
-  // Trigger doSync — dirty is true, so merge keeps local events
+  // Trigger doSync — applyPendingOps should re-add "Evento Local" from pendingOps
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await page.waitForTimeout(1500)
 
   await expect(eventCards.filter({ hasText: 'Evento Teste' })).toBeVisible()
   await expect(eventCards.filter({ hasText: 'Evento Local' })).toBeVisible()
+})
+
+test('S11: pendingOp delete sobrevive ao doSync', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
+  await page.goto('/')
+
+  // Make DELETE to events fail so the delete is queued as pendingOp
+  await page.route(/rest\/v1\/events/, async route => {
+    const method = route.request().method()
+    if (method === 'DELETE') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"erro"}' })
+    } else {
+      await route.fallback()
+    }
+  })
+
+  // Click on event and delete
+  await page.locator('.event-capsule, .event-card').first().click()
+  const [delRequest] = await Promise.all([
+    page.waitForRequest(req => req.url().includes('/rest/v1/events') && req.method() === 'DELETE'),
+    page.locator('.modal-footer .btn-danger').click()
+  ])
+  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+
+  // Event should not be visible (optimistic removal)
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).not.toBeVisible()
+
+  // Verify pendingOp exists
+  let pendingOps = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('sincronia_pendingOps') || '[]')
+  )
+  expect(pendingOps.length).toBe(1)
+  expect(pendingOps[0].type).toBe('delete')
+
+  // Override GET events for doSync — remote still has the event
+  await page.route(/rest\/v1\/events\?select=\*&order=date\.asc/, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 1, title: 'Evento Teste', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null }
+      ])
+    })
+  })
+
+  // Trigger doSync — applyPendingOps should remove the event (pending delete op)
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).not.toBeVisible()
+
+  // PendingOp should still be in queue (no automatic flush yet)
+  pendingOps = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('sincronia_pendingOps') || '[]')
+  )
+  expect(pendingOps.length).toBe(1)
+  expect(pendingOps[0].type).toBe('delete')
+})
+
+test('S12: pendingOps sao processados quando Supabase volta', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
+  await page.goto('/')
+
+  // Fail POST to events
+  await page.route(/rest\/v1\/events/, async route => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"erro"}' })
+    } else {
+      await route.fallback()
+    }
+  })
+
+  // Create event — POST fails, queued as pendingOp
+  await page.locator('.fab-btn').click()
+  await expect(page.locator('.modal-overlay')).toBeVisible()
+  await page.locator('.modal-body input[type="date"]').fill('2026-05-22')
+  await page.locator('.modal-body input[type="text"]').first().fill('Evento Local')
+  await page.locator('.modal-body input[type="time"]').first().fill('14:00')
+  await page.locator('.modal-body input[type="time"]').last().fill('15:00')
+  await page.locator('.modal-footer .btn-primary').click()
+  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+
+  // Verify pendingOp exists
+  let pendingOps = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('sincronia_pendingOps') || '[]')
+  )
+  expect(pendingOps.length).toBe(1)
+  expect(pendingOps[0].type).toBe('create')
+
+  // Now make POST succeed and override GET for doSync — remote has base event + created event
+  await page.route(/rest\/v1\/events\?select=\*&order=date\.asc/, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 1, title: 'Evento Teste', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null }
+      ])
+    })
+  })
+  await page.route(/rest\/v1\/events/, async route => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 201, contentType: 'application/json', body: '[]' })
+    } else {
+      await route.fallback()
+    }
+  })
+
+  // Trigger doSync — processPendingOps flushes the pendingOp to Supabase
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  // Verify pendingOp was flushed
+  pendingOps = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('sincronia_pendingOps') || '[]')
+  )
+  expect(pendingOps.length).toBe(0)
 })
