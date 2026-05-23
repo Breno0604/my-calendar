@@ -231,6 +231,8 @@ const generateMockEvents = () => {
 }
 
 // --- Lifecycle & Persistence ---
+let dirty = false
+
 onMounted(() => {
   // Load Dark Mode Preference
   const savedTheme = localStorage.getItem('theme')
@@ -250,6 +252,9 @@ onMounted(() => {
   const localCatResult = ioService.loadFromStorage('sincronia_categories', localStorage)
   if (localCatResult.success && localCatResult.data) {
     categoriesData.value = localCatResult.data
+    // Fire-and-forget push to Supabase — dirty flag prevents doSync from
+    // overwriting if the push hasn't completed yet.
+    saveCategoriesToStorage()
   } else if (sb) {
     dbService.loadCategories(sb, localStorage).then(result => {
       if (result.success && result.data.length > 0) {
@@ -266,6 +271,7 @@ onMounted(() => {
   const localEventsResult = ioService.loadFromStorage('sincronia_events', localStorage)
   if (localEventsResult.success && localEventsResult.data) {
     events.value = localEventsResult.data
+    saveToStorage()
   } else if (sb) {
     dbService.loadEvents(sb, localStorage).then(result => {
       if (result.success && result.data.length > 0) {
@@ -296,28 +302,48 @@ onMounted(() => {
     const shouldSync = () => !showModal.value
 
     let syncing = false
+
     const doSync = async () => {
       if (!shouldSync() || syncing) return
       syncing = true
-      const [saveEventsResult, saveCategoriesResult] = await Promise.all([
-        dbService.saveEvents(sb, events.value),
-        dbService.saveCategories(sb, categoriesData.value)
-      ])
+
+      // Pull-merge: fetch remote data, merge with local.
+      // Never push local state — that is saveToStorage's job.
+      // When remote is empty we keep local data — it could be a transient
+      // network issue, not an actual deletion.
       const r = await Promise.all([
         dbService.fetchEvents(sb),
         dbService.fetchCategories(sb)
       ])
-      // Only replace local data if the SAVE to Supabase succeeded
-      // AND fetched data is non-empty (avoid overwriting with stale/empty data).
-      if (saveEventsResult.success && r[0].success && r[0].data.length > 0) {
-        events.value = r[0].data
+
+      if (r[0].success && r[0].data.length > 0) {
+        if (dirty) {
+          // Merge: add remote events not in local, keep all local events.
+          const localIds = new Set(events.value.map(e => e.id))
+          events.value = [...events.value, ...r[0].data.filter(e => !localIds.has(e.id))]
+        } else {
+          // No unsaved changes: full replace (propagates adds AND deletes).
+          events.value = r[0].data
+        }
         ioService.saveToStorage('sincronia_events', events.value, localStorage)
       }
-      if (saveCategoriesResult.success && r[1].success && r[1].data.length > 0) {
-        categoriesData.value = r[1].data
+
+      if (r[1].success && r[1].data.length > 0) {
+        if (dirty) {
+          const localIds = new Set(categoriesData.value.map(c => c.id))
+          categoriesData.value = [...categoriesData.value, ...r[1].data.filter(c => !localIds.has(c.id))]
+        } else {
+          categoriesData.value = r[1].data
+        }
         ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
       }
       syncing = false
+    }
+
+    const onRealtimeChange = () => {
+      // Debounce: if doSync is already running (e.g. from a concurrent save),
+      // skip this realtime trigger — the in-flight sync will pick up changes.
+      if (!syncing) doSync()
     }
 
     // Visibility change (tab switch)
@@ -330,30 +356,42 @@ onMounted(() => {
     pollId = setInterval(doSync, 30000)
 
     // Realtime subscriptions
-    dbService.subscribeToTable(sb, 'events', doSync)
-    dbService.subscribeToTable(sb, 'categories', doSync)
+    dbService.subscribeToTable(sb, 'events', onRealtimeChange)
+    dbService.subscribeToTable(sb, 'categories', onRealtimeChange)
   }
 })
 
+let _saveGen = 0
+
 const saveToStorage = async () => {
+  const gen = ++_saveGen
+  dirty = true
   ioService.saveToStorage('sincronia_events', events.value, localStorage)
   const sb = getSupabase()
   if (sb) {
     const result = await dbService.saveEvents(sb, events.value)
-    if (!result.success) {
-      addToast('Erro ao salvar no Supabase. Dados salvos localmente.', 'warning', 5000)
+    if (gen === _saveGen) {
+      dirty = result.success ? false : true
     }
+  } else {
+    if (gen === _saveGen) dirty = false
   }
 }
 
+let _catSaveGen = 0
+
 const saveCategoriesToStorage = async () => {
+  const gen = ++_catSaveGen
+  dirty = true
   ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
   const sb = getSupabase()
   if (sb) {
     const result = await dbService.saveCategories(sb, categoriesData.value)
-    if (!result.success) {
-      addToast('Erro ao salvar categorias no Supabase. Dados salvos localmente.', 'warning', 5000)
+    if (gen === _catSaveGen) {
+      dirty = result.success ? false : true
     }
+  } else {
+    if (gen === _catSaveGen) dirty = false
   }
 }
 

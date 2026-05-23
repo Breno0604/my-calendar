@@ -132,6 +132,7 @@ test('S6: excluir evento dispara DELETE ao Supabase com ID correto', async ({ pa
 })
 
 test('S7: sync preserves local events when Supabase fetch returns empty (stale)', async ({ page }) => {
+
   const capture = []
   await interceptSupabase(page, capture)
 
@@ -158,4 +159,98 @@ test('S7: sync preserves local events when Supabase fetch returns empty (stale)'
   // Stage 4: local events should still be intact (not overwritten by empty Supabase data)
   await expect(eventCards.filter({ hasText: 'Evento Teste' })).toBeVisible()
   await expect(eventCards.filter({ hasText: 'Evento Sync Safe' })).toBeVisible()
+})
+
+test('S8: doSync pull incorpora evento adicionado por outro device', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
+  await page.goto('/')
+
+  // Register route for events GET doSync will call
+  await page.route('**/rest/v1/events?select=*&order=date.asc', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 1, title: 'Evento Teste', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null },
+        { id: 2, title: 'Evento Remoto', description: '', date: '2026-05-22', time_start: '14:00', time_end: '15:00', category_id: 'trabalho', subcategory_id: 'reuniao', recurrence: null, exceptions: {}, reminder: null }
+      ])
+    })
+  })
+
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Remoto' })).toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).toBeVisible()
+})
+
+test('S9: doSync pull remove evento deletado remotamente por outro device', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
+  await page.goto('/')
+
+  // Register route for events GET — remote has only a substituted event
+  await page.route('**/rest/v1/events?select=*&order=date.asc', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 2, title: 'Evento Substituído', description: '', date: '2026-05-22', time_start: '14:00', time_end: '15:00', category_id: 'trabalho', subcategory_id: 'reuniao', recurrence: null, exceptions: {}, reminder: null }
+      ])
+    })
+  })
+
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).not.toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Substituído' })).toBeVisible()
+})
+
+test('S10: dirty guard preserva evento local quando saveToStorage falha', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
+  await page.goto('/')
+
+  // Make saveToStorage POST fail so dirty stays true
+  await page.route(/rest\/v1\/events/, async route => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"erro"}' })
+    } else {
+      await route.fallback()
+    }
+  })
+
+  // User adds event via FAB
+  await page.locator('.fab-btn').click()
+  await expect(page.locator('.modal-overlay')).toBeVisible()
+  await page.locator('.modal-body input[type="date"]').fill('2026-05-22')
+  await page.locator('.modal-body input[type="text"]').first().fill('Evento Local')
+  await page.locator('.modal-body input[type="time"]').first().fill('14:00')
+  await page.locator('.modal-body input[type="time"]').last().fill('15:00')
+  await page.locator('.modal-footer .btn-primary').click()
+  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Local' })).toBeVisible()
+
+  // Register GET handler for doSync — remote has only the base event (no "Evento Local")
+  await page.route('**/rest/v1/events?select=*&order=date.asc', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 1, title: 'Evento Teste', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null }
+      ])
+    })
+  })
+
+  // Trigger doSync — dirty is true, so merge keeps local events
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Local' })).toBeVisible()
 })
