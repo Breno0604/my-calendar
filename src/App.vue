@@ -9,6 +9,7 @@ import * as mockService from './services/mock.js'
 import * as ioService from './services/io.js'
 import * as dbService from './services/db.js'
 import { getSupabase } from './lib/supabaseClient.js'
+import * as pendingOpsService from './services/pending-ops.js'
 import { version } from '../package.json'
 
 // --- State & Config ---
@@ -107,6 +108,7 @@ const resetFilters = () => {
 
 // --- Events State ---
 const events = ref([])
+const pendingOps = ref([])
 
 // --- Modals Toggles ---
 const showAddModal = ref(false)
@@ -286,6 +288,9 @@ onMounted(() => {
     saveToStorage()
   }
 
+  // Load pending operations from localStorage
+  pendingOps.value = pendingOpsService.getPendingOps(localStorage)
+
   // Initialize infinite scroll months
   initInfiniteScroll()
 
@@ -358,6 +363,11 @@ onMounted(() => {
     // Realtime subscriptions
     dbService.subscribeToTable(sb, 'events', onRealtimeChange)
     dbService.subscribeToTable(sb, 'categories', onRealtimeChange)
+
+    // Periodic retry of pending operations
+    pendingTimer = setInterval(() => {
+      if (pendingOps.value.length > 0) processPendingOps()
+    }, 30000)
   }
 })
 
@@ -393,6 +403,49 @@ const saveCategoriesToStorage = async () => {
   } else {
     if (gen === _catSaveGen) dirty = false
   }
+}
+
+const processPendingOps = async () => {
+  const ops = pendingOps.value
+  if (ops.length === 0) return false
+  const sb = getSupabase()
+  if (!sb) return false
+
+  let anySuccess = false
+  const remaining = []
+
+  for (const op of ops) {
+    if (op.type === 'create' && op.event) {
+      const result = await dbService.saveEvents(sb, [op.event])
+      if (result.success) {
+        pendingOpsService.removePendingOp(localStorage, 'create', op.event.id)
+        anySuccess = true
+      } else {
+        remaining.push(op)
+      }
+    } else if (op.type === 'delete' && op.id) {
+      const { error } = await sb.from('events').delete().eq('id', op.id)
+      if (!error) {
+        pendingOpsService.removePendingOp(localStorage, 'delete', op.id)
+        anySuccess = true
+      } else {
+        remaining.push(op)
+      }
+    } else if (op.type === 'edit' && op.event) {
+      const result = await dbService.saveEvents(sb, [op.event])
+      if (result.success) {
+        pendingOpsService.removePendingOp(localStorage, 'edit', op.event.id)
+        anySuccess = true
+      } else {
+        remaining.push(op)
+      }
+    } else {
+      remaining.push(op)
+    }
+  }
+
+  pendingOps.value = pendingOpsService.getPendingOps(localStorage)
+  return anySuccess
 }
 
 const toggleTheme = () => {
@@ -631,11 +684,28 @@ const saveNewEvent = () => {
     exceptions: {}
   }
 
-  checkConflictsBeforeSave(() => {
+  checkConflictsBeforeSave(async () => {
     events.value.push(newEv)
-    saveToStorage()
+
+    const sb = getSupabase()
+    if (sb) {
+      const result = await dbService.saveEvents(sb, [newEv])
+      if (result.success) {
+        ioService.saveToStorage('sincronia_events', events.value, localStorage)
+        showAddModal.value = false
+        addToast('Compromisso criado com sucesso', 'success')
+        return
+      }
+    }
+
+    pendingOpsService.addPendingOp(localStorage, {
+      type: 'create', event: newEv, timestamp: Date.now()
+    })
+    pendingOps.value = pendingOpsService.getPendingOps(localStorage)
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     showAddModal.value = false
-    addToast('Compromisso criado com sucesso', 'success')
+    addToast('Salvo localmente — sincronizará quando houver conexão', 'warning', 5000)
+    processPendingOps()
   })
 }
 
@@ -645,7 +715,7 @@ const saveEditedEvent = () => {
   if (!eventForm.value.timeStart || !eventForm.value.timeEnd) { addToast('Preencha os horários', 'error'); return }
   if (eventForm.value.timeEnd <= eventForm.value.timeStart) { addToast('Horário final deve ser após o inicial', 'error'); return }
 
-  checkConflictsBeforeSave(() => {
+  checkConflictsBeforeSave(async () => {
     if (editingExceptionDate.value) {
       const master = events.value.find(e => e.id === eventForm.value.id)
       if (master) {
@@ -655,7 +725,7 @@ const saveEditedEvent = () => {
         overrideFields.forEach(f => { exc[f] = eventForm.value[f] })
         master.exceptions[editingExceptionDate.value] = exc
         events.value = [...events.value]
-        saveToStorage()
+        ioService.saveToStorage('sincronia_events', events.value, localStorage)
       }
       editingExceptionDate.value = null
       showEditModal.value = false
@@ -664,15 +734,33 @@ const saveEditedEvent = () => {
     }
 
     const index = events.value.findIndex(e => e.id === eventForm.value.id)
-    if (index !== -1) {
-      events.value[index] = {
-        ...eventForm.value,
-        recurrence: buildRecurrence()
-      }
-      saveToStorage()
-      addToast('Compromisso atualizado com sucesso', 'success')
+    if (index === -1) { showEditModal.value = false; return }
+
+    const editedEv = {
+      ...eventForm.value,
+      recurrence: buildRecurrence()
     }
+    events.value[index] = editedEv
+
+    const sb = getSupabase()
+    if (sb) {
+      const result = await dbService.saveEvents(sb, [editedEv])
+      if (result.success) {
+        ioService.saveToStorage('sincronia_events', events.value, localStorage)
+        showEditModal.value = false
+        addToast('Compromisso atualizado com sucesso', 'success')
+        return
+      }
+    }
+
+    pendingOpsService.addPendingOp(localStorage, {
+      type: 'edit', event: editedEv, timestamp: Date.now()
+    })
+    pendingOps.value = pendingOpsService.getPendingOps(localStorage)
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     showEditModal.value = false
+    addToast('Salvo localmente — sincronizará quando houver conexão', 'warning', 5000)
+    processPendingOps()
   })
 }
 
@@ -693,7 +781,7 @@ const handleRecurrenceConfirm = (choice) => {
       : deleteOneInstance(event._masterId, event.date, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
-    saveToStorage()
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     addToast(choice === 'all' ? 'Série de compromissos excluída' : 'Ocorrência excluída', 'success')
     showEditModal.value = false
   } else if (action === 'edit') {
@@ -715,7 +803,7 @@ const handleRecurrenceConfirm = (choice) => {
       : moveOneInstance(event._masterId, event.date, event.proposedDate, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
-    saveToStorage()
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     addToast('Compromisso movido para ' + event.proposedDate, 'success')
   }
 
@@ -927,22 +1015,56 @@ const removeToast = (id) => {
 
 // --- Undo System ---
 const deletedStack = ref([])
-const undoDelete = () => {
+const undoDelete = async () => {
   const item = deletedStack.value.pop()
   if (!item) return
   events.value.push(item.event)
-  saveToStorage()
-  addToast('Exclusão desfeita', 'info', 3000)
+
+  pendingOpsService.removePendingOp(localStorage, 'delete', item.event.id)
+
+  const sb = getSupabase()
+  if (sb) {
+    const result = await dbService.saveEvents(sb, [item.event])
+    if (result.success) {
+      ioService.saveToStorage('sincronia_events', events.value, localStorage)
+      addToast('Exclusão desfeita', 'info', 3000)
+      return
+    }
+  }
+
+  pendingOpsService.addPendingOp(localStorage, {
+    type: 'create', event: item.event, timestamp: Date.now()
+  })
+  pendingOps.value = pendingOpsService.getPendingOps(localStorage)
+  ioService.saveToStorage('sincronia_events', events.value, localStorage)
+  addToast('Exclusão desfeita — sincronizará quando houver conexão', 'warning', 5000)
 }
-const undoableDelete = (event) => {
+const undoableDelete = async (event) => {
   events.value = events.value.filter(e => e.id !== event.id)
-  saveToStorage()
+
+  const sb = getSupabase()
+  if (sb) {
+    const { error } = await sb.from('events').delete().eq('id', event.id)
+    if (!error) {
+      ioService.saveToStorage('sincronia_events', events.value, localStorage)
+      deletedStack.value.push({ event, timestamp: Date.now() })
+      addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })
+      setTimeout(() => {
+        const idx = deletedStack.value.findIndex(d => d.event.id === event.id)
+        if (idx !== -1) deletedStack.value.splice(idx, 1)
+      }, 30000)
+      return
+    }
+  }
+
+  pendingOpsService.addPendingOp(localStorage, {
+    type: 'delete', id: event.id, timestamp: Date.now()
+  })
+  pendingOps.value = pendingOpsService.getPendingOps(localStorage)
+  ioService.saveToStorage('sincronia_events', events.value, localStorage)
   deletedStack.value.push({ event, timestamp: Date.now() })
-  addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })
-  setTimeout(() => {
-    const idx = deletedStack.value.findIndex(d => d.event.id === event.id)
-    if (idx !== -1) deletedStack.value.splice(idx, 1)
-  }, 30000)
+  addToast('Exclusão salva localmente — sincronizará quando houver conexão', 'warning', 5000)
+  processPendingOps()
 }
 
 // --- Conflict Detection ---
@@ -1087,6 +1209,7 @@ const handleKeydown = (e) => {
 // --- Sync state ---
 let pollId = null
 let onVisibility = null
+let pendingTimer = null
 
 // --- Reminders ---
 let reminderInterval = null

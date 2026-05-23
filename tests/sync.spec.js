@@ -51,7 +51,7 @@ test('S2: editar evento envia dados atualizados ao Supabase', async ({ page }) =
   expect(edited.title).toBe('Título Editado Sync')
 })
 
-test('S3: excluir evento remove do payload enviado ao Supabase', async ({ page }) => {
+test('S3: excluir evento dispara DELETE ao Supabase com ID correto', async ({ page }) => {
   const supabaseData = []
   await interceptSupabase(page, supabaseData)
   await page.goto('/')
@@ -59,13 +59,13 @@ test('S3: excluir evento remove do payload enviado ao Supabase', async ({ page }
   await page.locator('.event-capsule, .event-card').first().click()
 
   const [request] = await Promise.all([
-    page.waitForRequest(req => req.url().includes('/rest/v1/events') && req.method() === 'POST'),
+    page.waitForRequest(req => req.url().includes('/rest/v1/events') && req.method() === 'DELETE'),
     page.locator('.modal-footer .btn-danger').click()
   ])
 
-  const body = request.postDataJSON()
-  expect(Array.isArray(body)).toBeTruthy()
-  expect(body.some(e => e.id === 1)).toBeFalsy()
+  const delUrl = request.url()
+  expect(delUrl).toContain('id=eq.')
+  expect(delUrl).toContain('1')
 })
 
 test('S4: criar categoria envia dados corretos ao Supabase', async ({ page }) => {
@@ -109,26 +109,26 @@ test('S5: editar categoria envia nome atualizado ao Supabase', async ({ page }) 
   expect(editada.name).toBe('Pessoal Editado')
 })
 
-test('S6: excluir evento dispara DELETE ao Supabase com ID correto', async ({ page }) => {
+test('S6: excluir evento dispara DELETE ao Supabase com ID correto e pendingOp', async ({ page }) => {
   const supabaseData = []
-  await interceptSupabase(page, supabaseData, { initialEventIds: [{ id: 1 }] })
+  await interceptSupabase(page, supabaseData)
   await page.goto('/')
 
   await page.locator('.event-capsule, .event-card').first().click()
 
-  const [delRequest, postRequest] = await Promise.all([
+  const [delRequest] = await Promise.all([
     page.waitForRequest(req => req.url().includes('/rest/v1/events') && req.method() === 'DELETE'),
-    page.waitForRequest(req => req.url().includes('/rest/v1/events') && req.method() === 'POST'),
     page.locator('.modal-footer .btn-danger').click()
   ])
 
   const delUrl = delRequest.url()
-  expect(delUrl).toContain('id=in.')
+  expect(delUrl).toContain('id=eq.')
   expect(delUrl).toContain('1')
 
-  const body = postRequest.postDataJSON()
-  expect(Array.isArray(body)).toBeTruthy()
-  expect(body.some(e => e.id === 1)).toBeFalsy()
+  // Evento deve sumir do calendario
+  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).not.toBeVisible()
 })
 
 test('S7: sync preserves local events when Supabase fetch returns empty (stale)', async ({ page }) => {
