@@ -18,17 +18,15 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
   // Intercept all requests to the mock Supabase endpoint so tests
   // don't actually connect to 127.0.0.1:9999.
   // GET → empty array (triggers localStorage fallback in the app).
-  // POST → continue (lets upstream handlers like interceptSupabase capture the data,
-  //         then falls through to the actual network — which will fail, but the app
-  //         catches the error and the data was already saved to localStorage).
+  // REST operations → 200/201 (success), so the app's Supabase-first CRUD flow completes.
   // WebSocket etc. → abort.
   await page.route(/127\.0\.0\.1:9999/, async route => {
     const url = route.request().url()
     const method = route.request().method()
     if (method === 'GET' && url.includes('/rest/v1/')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
-    } else if (method === 'POST' && url.includes('/rest/v1/')) {
-      await route.continue()
+    } else if (['POST', 'DELETE', 'PATCH', 'PUT'].includes(method) && url.includes('/rest/v1/')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
     } else {
       await route.abort('connectionrefused')
     }
