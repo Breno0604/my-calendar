@@ -357,10 +357,6 @@ onMounted(() => {
 
 const saveToStorage = async () => {
   ioService.saveToStorage('sincronia_events', events.value, localStorage)
-  const sb = getSupabase()
-  if (sb) {
-    await dbService.saveEvents(sb, events.value).catch(() => {})
-  }
 }
 
 const saveCategoriesToStorage = async () => {
@@ -742,12 +738,22 @@ const handleRecurrenceConfirm = (choice) => {
   const { event, action } = recurrencePending.value
 
   if (action === 'delete') {
+    const masterId = event._masterId
     const result = choice === 'all'
-      ? deleteSeries(event._masterId, events.value)
-      : deleteOneInstance(event._masterId, event.date, events.value)
+      ? deleteSeries(masterId, events.value)
+      : deleteOneInstance(masterId, event.date, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
-    saveToStorage()
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
+    const sb = getSupabase()
+    if (sb) {
+      if (choice === 'all') {
+        sb.from('events').delete().eq('id', masterId).then(() => {}, () => {})
+      } else {
+        const master = events.value.find(e => e.id === masterId)
+        if (master) dbService.saveEvents(sb, [master]).catch(() => {})
+      }
+    }
     addToast(choice === 'all' ? 'Série de compromissos excluída' : 'Ocorrência excluída', 'success')
     showEditModal.value = false
   } else if (action === 'edit') {
@@ -764,12 +770,23 @@ const handleRecurrenceConfirm = (choice) => {
     }
     showEditModal.value = true
   } else if (action === 'move') {
+    const masterId = event._masterId
+    const existingIds = new Set(events.value.map(e => e.id))
     const result = choice === 'all'
-      ? moveSeries(event._masterId, event.proposedDate, events.value)
-      : moveOneInstance(event._masterId, event.date, event.proposedDate, events.value)
+      ? moveSeries(masterId, event.proposedDate, events.value)
+      : moveOneInstance(masterId, event.date, event.proposedDate, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
-    saveToStorage()
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
+    const sb = getSupabase()
+    if (sb) {
+      const master = events.value.find(e => e.id === masterId)
+      if (master) dbService.saveEvents(sb, [master]).catch(() => {})
+      if (choice === 'one') {
+        const newInstance = events.value.find(e => !existingIds.has(e.id))
+        if (newInstance) dbService.saveEvents(sb, [newInstance]).catch(() => {})
+      }
+    }
     addToast('Compromisso movido para ' + event.proposedDate, 'success')
   }
 
@@ -784,7 +801,9 @@ const handleDeleteClick = () => {
       if (!master.exceptions) master.exceptions = {}
       master.exceptions[editingExceptionDate.value] = { deleted: true }
       events.value = [...events.value]
-      saveToStorage()
+      ioService.saveToStorage('sincronia_events', events.value, localStorage)
+      const sb = getSupabase()
+      if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
     }
     editingExceptionDate.value = null
     showEditModal.value = false
@@ -861,14 +880,15 @@ const confirmDeleteCategory = () => {
   const fallbackCatId = categoriesData.value[0].id
   const fallbackSubId = categoriesData.value[0].subcategories[0]?.id || ''
 
-  events.value.forEach(e => {
-    if (e.categoryId === catId) {
-      e.categoryId = fallbackCatId
-      e.subcategoryId = fallbackSubId
-    }
-  })
+  const affectedIds = new Set(events.value.filter(e => e.categoryId === catId).map(e => e.id))
+  events.value.forEach(e => { if (e.categoryId === catId) { e.categoryId = fallbackCatId; e.subcategoryId = fallbackSubId } })
 
-  saveToStorage()
+  ioService.saveToStorage('sincronia_events', events.value, localStorage)
+  const sb = getSupabase()
+  if (sb) {
+    const affected = events.value.filter(e => affectedIds.has(e.id))
+    if (affected.length) dbService.saveEvents(sb, affected).catch(() => {})
+  }
   saveCategoriesToStorage()
   addToast('Categoria excluída com sucesso', 'success')
   showDeleteConfirm.value = false
@@ -910,12 +930,14 @@ const deleteSubcategory = (catId, subId) => {
       delete activeSubcategoryFilters.value[subId]
       
       const fallbackSubId = cat.subcategories[0]?.id || ''
-      events.value.forEach(e => {
-        if (e.categoryId === catId && e.subcategoryId === subId) {
-          e.subcategoryId = fallbackSubId
-        }
-      })
-      saveToStorage()
+      const affectedIds = new Set(events.value.filter(e => e.categoryId === catId && e.subcategoryId === subId).map(e => e.id))
+      events.value.forEach(e => { if (e.categoryId === catId && e.subcategoryId === subId) { e.subcategoryId = fallbackSubId } })
+      ioService.saveToStorage('sincronia_events', events.value, localStorage)
+      const sb = getSupabase()
+      if (sb) {
+        const affected = events.value.filter(e => affectedIds.has(e.id))
+        if (affected.length) dbService.saveEvents(sb, affected).catch(() => {})
+      }
       saveCategoriesToStorage()
       addToast('Subcategoria excluída', 'info')
     }
@@ -1097,7 +1119,9 @@ const onDrop = (cell, e) => {
   } else {
     master.date = targetDate
     events.value = [...events.value]
-    saveToStorage()
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
+    const sb = getSupabase()
+    if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
     addToast('Compromisso movido para ' + targetDate, 'success')
   }
   draggedEvent.value = null
@@ -1125,7 +1149,9 @@ const onResizeMouseUp = () => {
         master.timeEnd = resizingEvent.value._resizeEnd
       }
       events.value = [...events.value]
-      saveToStorage()
+      ioService.saveToStorage('sincronia_events', events.value, localStorage)
+      const sb = getSupabase()
+      if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
       addToast('Horário ajustado', 'info', 2000)
     }
   }
@@ -1242,9 +1268,12 @@ const handleImportFile = (e) => {
     const text = evt.target.result
     const parseResult = ioService.parseCSV(text)
     if (!parseResult.success) { addToast(parseResult.error, 'error'); return }
-    events.value = [...events.value, ...parseResult.data]
-    saveToStorage()
-    addToast(`${parseResult.data.length} evento(s) importado(s) com sucesso`, 'success')
+    const imported = parseResult.data
+    events.value = [...events.value, ...imported]
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
+    const sb = getSupabase()
+    if (sb) dbService.saveEvents(sb, imported).catch(() => {})
+    addToast(`${imported.length} evento(s) importado(s) com sucesso`, 'success')
   }
   reader.onerror = () => addToast('Erro ao ler arquivo. Verifique se é um CSV válido.', 'error')
   reader.readAsText(file)
