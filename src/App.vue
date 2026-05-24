@@ -266,23 +266,25 @@ onMounted(() => {
     saveCategoriesToStorage()
   }
 
-  // Load Events: localStorage first (source of truth), Supabase as enrichment
+  // Load Events: localStorage first (fast render), Supabase as source of truth.
+  // Do NOT push to Supabase here — stale local data could re-create deleted events
+  // on other devices. doSync (set up below) handles reconciliation.
   const localEventsResult = ioService.loadFromStorage('sincronia_events', localStorage)
   if (localEventsResult.success && localEventsResult.data) {
     events.value = localEventsResult.data
-    saveToStorage()
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
   } else if (sb) {
     dbService.loadEvents(sb, localStorage).then(result => {
       if (result.success && result.data.length > 0) {
         events.value = result.data
       } else {
         events.value = generateMockEvents()
-        saveToStorage()
+        ioService.saveToStorage('sincronia_events', events.value, localStorage)
       }
     })
   } else {
     events.value = generateMockEvents()
-    saveToStorage()
+    ioService.saveToStorage('sincronia_events', events.value, localStorage)
   }
 
   // Load pending operations from localStorage
