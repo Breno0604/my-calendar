@@ -5,7 +5,26 @@ const defaultCategories = [
   { id: 'trabalho', name: 'Trabalho', colorCode: '#3b82f6', subcategories: [{ id: 'reuniao', name: 'Reunião' }, { id: 'projeto', name: 'Projeto' }, { id: 'desenvolvimento', name: 'Desenvolvimento' }] }
 ]
 
+/* Convert event from app format (camelCase) to Supabase format (snake_case). */
+function toEventSnakeCase(e) {
+  return {
+    ...e,
+    time_start: e.timeStart,
+    time_end: e.timeEnd,
+    category_id: e.categoryId,
+    subcategory_id: e.subcategoryId
+  }
+}
+
+/* Convert category from app format (camelCase) to Supabase format (snake_case). */
+function toCategorySnakeCase(c) {
+  return { ...c, color_code: c.colorCode }
+}
+
 export async function seedStorage(page, { events = [], categories, theme = 'light', fixedDate = '2026-05-21' } = {}) {
+  const cats = categories || defaultCategories
+  const dbEvents = events.map(toEventSnakeCase)
+  const dbCats = cats.map(toCategorySnakeCase)
   await page.addInitScript((args) => {
     localStorage.setItem('sincronia_events', JSON.stringify(args.events))
     localStorage.setItem('sincronia_categories', JSON.stringify(args.categories))
@@ -13,18 +32,16 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
     if (args.fixedDate) {
       localStorage.setItem('sincronia_fixedDate', args.fixedDate)
     }
-  }, { events, categories: categories || defaultCategories, theme, fixedDate })
+  }, { events: dbEvents, categories: dbCats, theme, fixedDate })
 
-  // Intercept all requests to the mock Supabase endpoint so tests
-  // don't actually connect to 127.0.0.1:9999.
-  // GET → empty array (triggers localStorage fallback in the app).
-  // REST operations → 200/201 (success), so the app's Supabase-first CRUD flow completes.
-  // WebSocket etc. → abort.
+  // Mock Supabase REST — return seeded data in snake_case (Supabase format).
   await page.route(/127\.0\.0\.1:9999/, async route => {
     const url = route.request().url()
     const method = route.request().method()
-    if (method === 'GET' && url.includes('/rest/v1/')) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    if (method === 'GET' && url.includes('/rest/v1/events')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dbEvents) })
+    } else if (method === 'GET' && url.includes('/rest/v1/categories')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dbCats) })
     } else if (['POST', 'DELETE', 'PATCH', 'PUT'].includes(method) && url.includes('/rest/v1/')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
     } else {

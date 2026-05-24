@@ -248,41 +248,43 @@ onMounted(() => {
   // Initialize filters map
   initializeFilters()
 
-  // Load Categories: localStorage first (source of truth), Supabase as enrichment
+  // Load Categories: localStorage for fast render, Supabase async for truth
   const sb = getSupabase()
   const localCatResult = ioService.loadFromStorage('sincronia_categories', localStorage)
   if (localCatResult.success && localCatResult.data) {
     categoriesData.value = localCatResult.data
-    saveCategoriesToStorage()
-  } else if (sb) {
-    dbService.loadCategories(sb, localStorage).then(result => {
-      if (result.success && result.data.length > 0) {
-        categoriesData.value = result.data
-      } else {
-        saveCategoriesToStorage()
+  }
+  if (sb) {
+    dbService.fetchCategories(sb).then(catResult => {
+      if (catResult.success && catResult.data.length > 0) {
+        categoriesData.value = catResult.data
       }
+      ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
     })
-  } else {
+  } else if (!localCatResult.success || !localCatResult.data) {
     saveCategoriesToStorage()
   }
 
-  // Load Events: localStorage first (fast render), Supabase as source of truth.
-  // Do NOT push to Supabase here — stale local data could re-create deleted events
-  // on other devices. doSync (set up below) handles reconciliation.
-  const localEventsResult = ioService.loadFromStorage('sincronia_events', localStorage)
-  if (localEventsResult.success && localEventsResult.data) {
-    events.value = localEventsResult.data
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
-  } else if (sb) {
-    dbService.loadEvents(sb, localStorage).then(result => {
-      if (result.success && result.data.length > 0) {
-        events.value = result.data
-      } else {
-        events.value = generateMockEvents()
-        ioService.saveToStorage('sincronia_events', events.value, localStorage)
+  // Load Events: localStorage for fast render, Supabase async for truth.
+  // saveToStorage is localStorage-only — stale data NEVER pushed to Supabase.
+  const localEvResult = ioService.loadFromStorage('sincronia_events', localStorage)
+  if (localEvResult.success && localEvResult.data) {
+    events.value = localEvResult.data.map(e => ({
+      ...e,
+      timeStart: e.timeStart || e.time_start,
+      timeEnd: e.timeEnd || e.time_end,
+      categoryId: e.categoryId || e.category_id,
+      subcategoryId: e.subcategoryId || e.subcategory_id
+    }))
+  }
+  if (sb) {
+    dbService.fetchEvents(sb).then(evResult => {
+      if (evResult.success && evResult.data.length > 0) {
+        events.value = pendingOpsService.applyPendingOps(localStorage, evResult.data)
       }
+      ioService.saveToStorage('sincronia_events', events.value, localStorage)
     })
-  } else {
+  } else if (!localEvResult.success || !localEvResult.data) {
     events.value = generateMockEvents()
     ioService.saveToStorage('sincronia_events', events.value, localStorage)
   }

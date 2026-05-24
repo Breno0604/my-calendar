@@ -417,11 +417,9 @@ test('S13: localStorage obsoleto nao recria evento deletado no Supabase ao recon
 
   await page.goto('/')
 
-  // Stale event is initially visible (loaded from localStorage before sync)
-  let eventCards = page.locator('.event-capsule, .event-card')
-  await expect(eventCards.filter({ hasText: 'Evento Deletado' })).toBeVisible()
-
-  // Stale event was NOT pushed to Supabase during onMounted
+  // Stale event was in localStorage initially; Supabase overwrites during goto
+  // (page.route handlers complete before goto returns). The important assertion:
+  // onMounted NEVER pushed the stale event to Supabase.
   const pushedIds = posts.map(e => e.id)
   expect(pushedIds).not.toContain(2)
 
@@ -429,9 +427,9 @@ test('S13: localStorage obsoleto nao recria evento deletado no Supabase ao recon
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await page.waitForTimeout(1500)
 
-  // After sync, stale event is gone; only remote event visible
-  await expect(eventCards.filter({ hasText: 'Evento Correto' })).toBeVisible()
-  await expect(eventCards.filter({ hasText: 'Evento Deletado' })).not.toBeVisible()
+  // After sync, only remote event is visible; stale event is gone
+  await expect(page.locator('.event-capsule, .event-card').filter({ hasText: 'Evento Correto' })).toBeVisible()
+  await expect(page.locator('.event-capsule, .event-card').filter({ hasText: 'Evento Deletado' })).not.toBeVisible()
 
   // Stale event was STILL not pushed during doSync
   const pushedIdsAfterSync = posts.map(e => e.id)
