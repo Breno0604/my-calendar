@@ -373,3 +373,67 @@ test('S12: pendingOps sao processados quando Supabase volta', async ({ page }) =
   )
   expect(pendingOps.length).toBe(0)
 })
+
+test('S13: localStorage obsoleto nao recria evento deletado no Supabase ao reconectar', async ({ page }) => {
+  // Remote Supabase has only event id=1 (id=2 was deleted by another device)
+  const remoteEvents = [
+    { id: 1, title: 'Evento Correto', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null }
+  ]
+  const posts = []
+
+  // Intercept all Supabase requests
+  await page.route(/127\.0\.0\.1:9999/, async route => {
+    const url = route.request().url()
+    const method = route.request().method()
+    if (!url.includes('/rest/v1/')) {
+      await route.abort('connectionrefused'); return
+    }
+    if (url.includes('/events') && method === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(remoteEvents) })
+    } else if (method === 'POST' && url.includes('/rest/v1/events')) {
+      const body = route.request().postDataJSON()
+      if (Array.isArray(body)) posts.push(...body)
+      await route.fulfill({ status: 201, contentType: 'application/json', body: '[]' })
+    } else if (['POST', 'DELETE', 'PATCH', 'PUT'].includes(method)) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    }
+  })
+
+  // Seed localStorage with stale data that includes event id=2 (deleted remotely)
+  await page.addInitScript(() => {
+    localStorage.setItem('sincronia_events', JSON.stringify([
+      { id: 1, title: 'Evento Correto', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null },
+      { id: 2, title: 'Evento Deletado', description: '', date: '2026-05-22', time_start: '14:00', time_end: '15:00', category_id: 'trabalho', subcategory_id: 'reuniao', recurrence: null, exceptions: {}, reminder: null }
+    ]))
+    localStorage.setItem('sincronia_categories', JSON.stringify([
+      { id: 'pessoal', name: 'Pessoal', colorCode: '#10b981', subcategories: [{ id: 'lazer', name: 'Lazer' }] },
+      { id: 'trabalho', name: 'Trabalho', colorCode: '#3b82f6', subcategories: [{ id: 'reuniao', name: 'Reunião' }] }
+    ]))
+    localStorage.setItem('theme', 'light')
+    localStorage.setItem('sincronia_fixedDate', '2026-05-21')
+  })
+
+  await page.goto('/')
+
+  // Stale event is initially visible (loaded from localStorage before sync)
+  let eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Deletado' })).toBeVisible()
+
+  // Stale event was NOT pushed to Supabase during onMounted
+  const pushedIds = posts.map(e => e.id)
+  expect(pushedIds).not.toContain(2)
+
+  // Trigger doSync to reconcile with remote data
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  // After sync, stale event is gone; only remote event visible
+  await expect(eventCards.filter({ hasText: 'Evento Correto' })).toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Deletado' })).not.toBeVisible()
+
+  // Stale event was STILL not pushed during doSync
+  const pushedIdsAfterSync = posts.map(e => e.id)
+  expect(pushedIdsAfterSync).not.toContain(2)
+})
