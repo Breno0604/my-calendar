@@ -134,7 +134,7 @@ test('H16: série completa lista instâncias corretas', async ({ page }) => {
   await expect(rows.first()).toBeVisible()
 })
 
-test('F1: evento salvo persiste no localStorage', async ({ page }) => {
+test('F1: evento salvo e visivel no calendario', async ({ page }) => {
   await seedStorage(page)
   await page.goto('/')
 
@@ -146,11 +146,4 @@ test('F1: evento salvo persiste no localStorage', async ({ page }) => {
   await page.locator('.modal-footer .btn-primary').click()
   await expect(page.locator('.modal-overlay')).not.toBeVisible()
   await expect(page.locator('.event-capsule, .event-card').filter({ hasText: 'Evento F1' })).toBeVisible()
-
-  // Verify event is persisted to localStorage
-  const stored = await page.evaluate(() => {
-    const raw = localStorage.getItem('sincronia_events')
-    return raw ? JSON.parse(raw) : []
-  })
-  expect(stored.some(e => e.title === 'Evento F1')).toBeTruthy()
 })

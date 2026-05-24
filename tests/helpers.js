@@ -5,7 +5,7 @@ const defaultCategories = [
   { id: 'trabalho', name: 'Trabalho', colorCode: '#3b82f6', subcategories: [{ id: 'reuniao', name: 'Reunião' }, { id: 'projeto', name: 'Projeto' }, { id: 'desenvolvimento', name: 'Desenvolvimento' }] }
 ]
 
-/* Convert event from app format (camelCase) to Supabase format (snake_case). */
+/* Convert event from camelCase to snake_case (Supabase DB format). */
 function toEventSnakeCase(e) {
   return {
     ...e,
@@ -16,7 +16,7 @@ function toEventSnakeCase(e) {
   }
 }
 
-/* Convert category from app format (camelCase) to Supabase format (snake_case). */
+/* Convert category from camelCase to snake_case (Supabase DB format). */
 function toCategorySnakeCase(c) {
   return { ...c, color_code: c.colorCode }
 }
@@ -26,15 +26,13 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
   const dbEvents = events.map(toEventSnakeCase)
   const dbCats = cats.map(toCategorySnakeCase)
   await page.addInitScript((args) => {
-    localStorage.setItem('sincronia_events', JSON.stringify(args.events))
-    localStorage.setItem('sincronia_categories', JSON.stringify(args.categories))
     localStorage.setItem('theme', args.theme)
     if (args.fixedDate) {
       localStorage.setItem('sincronia_fixedDate', args.fixedDate)
     }
-  }, { events: dbEvents, categories: dbCats, theme, fixedDate })
+  }, { theme, fixedDate })
 
-  // Mock Supabase REST — return seeded data in snake_case (Supabase format).
+  // Mock Supabase REST — return seeded data in snake_case (Supabase DB format).
   await page.route(/127\.0\.0\.1:9999/, async route => {
     const url = route.request().url()
     const method = route.request().method()

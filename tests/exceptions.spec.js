@@ -27,7 +27,7 @@ test('D1: excluir "apenas esta" remove só uma instância', async ({ page }) => 
   await expect(page.locator('.modal-title', { hasText: 'Evento Recorrente' })).toBeVisible()
 
   await page.locator('.modal-content button', { hasText: 'Excluir apenas esta ocorrência' }).click()
-  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+  await expect(page.locator('.modal-overlay')).toHaveCount(0)
 
   const remaining = page.locator('.event-capsule').filter({ hasText: 'Diario Test' })
   await expect(remaining).toHaveCount(4)
@@ -55,7 +55,7 @@ test('D2: excluir "toda a série" remove todas', async ({ page }) => {
   await expect(page.locator('.modal-title', { hasText: 'Evento Recorrente' })).toBeVisible()
 
   await page.locator('.modal-content button', { hasText: 'Excluir toda a série' }).click()
-  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+  await expect(page.locator('.modal-overlay')).toHaveCount(0)
   await expect(page.locator('.event-capsule').filter({ hasText: 'Serie Completa' })).toHaveCount(0)
 })
 
