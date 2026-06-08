@@ -916,7 +916,15 @@ const undoableDelete = async (event) => {
 
   const sb = getSupabase()
   if (sb) {
-    await sb.from('events').delete().eq('id', event.id).catch(() => {})
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+    const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+    await fetch(`${supabaseUrl}/rest/v1/events?id=eq.${event.id}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      }
+    }).catch(() => {})
   }
   deletedStack.value.push({ event, timestamp: Date.now() })
   addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })

@@ -37,7 +37,6 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
   await page.route(/127\.0\.0\.1:9999/, async route => {
     const url = route.request().url()
     const method = route.request().method()
-    console.log('[seedStorage route]', method, url)
     if (method === 'GET' && url.includes('/rest/v1/events')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dbEvents) })
     } else if (method === 'GET' && url.includes('/rest/v1/categories')) {
