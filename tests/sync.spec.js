@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { seedStorage } from './helpers.js'
+import { seedStorage, interceptSupabase } from './helpers.js'
 
 const BASE_EVENT = { id: 1, title: 'Evento Teste', description: '', date: '2026-05-21', timeStart: '10:00', timeEnd: '11:00', categoryId: 'pessoal', subcategoryId: 'lazer', recurrence: null, exceptions: {} }
 
@@ -10,6 +10,8 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('S1: criar evento envia dados corretos ao Supabase', async ({ page }) => {
+  const supabaseData = []
+  await interceptSupabase(page, supabaseData)
   await page.goto('/')
 
   await page.locator(`.day-cell`).filter({ hasText: '22' }).locator('.add-event-inline-btn').click()
@@ -30,6 +32,8 @@ test('S1: criar evento envia dados corretos ao Supabase', async ({ page }) => {
 })
 
 test('S2: editar evento envia dados atualizados ao Supabase', async ({ page }) => {
+  const supabaseData = []
+  await interceptSupabase(page, supabaseData)
   await page.goto('/')
 
   await page.locator('.event-capsule, .event-card').first().click()
@@ -48,6 +52,8 @@ test('S2: editar evento envia dados atualizados ao Supabase', async ({ page }) =
 })
 
 test('S3: excluir evento dispara DELETE ao Supabase com ID correto', async ({ page }) => {
+  const supabaseData = []
+  await interceptSupabase(page, supabaseData)
   await page.goto('/')
 
   await page.locator('.event-capsule, .event-card').first().click()
@@ -63,6 +69,8 @@ test('S3: excluir evento dispara DELETE ao Supabase com ID correto', async ({ pa
 })
 
 test('S4: criar categoria envia dados corretos ao Supabase', async ({ page }) => {
+  const supabaseData = []
+  await interceptSupabase(page, supabaseData)
   await page.goto('/')
 
   await page.locator('.theme-toggle-btn[title="Configurações de Categorias"]').click()
@@ -80,6 +88,8 @@ test('S4: criar categoria envia dados corretos ao Supabase', async ({ page }) =>
 })
 
 test('S5: editar categoria envia nome atualizado ao Supabase', async ({ page }) => {
+  const supabaseData = []
+  await interceptSupabase(page, supabaseData)
   await page.goto('/')
 
   await page.locator('.theme-toggle-btn[title="Configurações de Categorias"]').click()
@@ -99,7 +109,9 @@ test('S5: editar categoria envia nome atualizado ao Supabase', async ({ page }) 
   expect(editada.name).toBe('Pessoal Editado')
 })
 
-test('S6: excluir evento dispara DELETE ao Supabase e some do calendario', async ({ page }) => {
+test('S6: excluir evento dispara DELETE ao Supabase com ID correto', async ({ page }) => {
+  const supabaseData = []
+  await interceptSupabase(page, supabaseData)
   await page.goto('/')
 
   await page.locator('.event-capsule, .event-card').first().click()
@@ -119,58 +131,87 @@ test('S6: excluir evento dispara DELETE ao Supabase e some do calendario', async
   await expect(eventCards.filter({ hasText: 'Evento Teste' })).not.toBeVisible()
 })
 
-test('S13: localStorage obsoleto nao recria evento deletado no Supabase ao reconectar', async ({ page }) => {
-  // Remote Supabase has only event id=1 (id=2 was deleted by another device)
-  const remoteEvents = [
-    { id: 1, title: 'Evento Correto', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null }
-  ]
-  const posts = []
-
-  // Intercept all Supabase requests
-  await page.route(/127\.0\.0\.1:9999/, async route => {
-    const url = route.request().url()
-    const method = route.request().method()
-    if (!url.includes('/rest/v1/')) {
-      await route.abort('connectionrefused'); return
-    }
-    if (url.includes('/events') && method === 'GET') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(remoteEvents) })
-    } else if (method === 'POST' && url.includes('/rest/v1/events')) {
-      const body = route.request().postDataJSON()
-      if (Array.isArray(body)) posts.push(...body)
-      await route.fulfill({ status: 201, contentType: 'application/json', body: '[]' })
-    } else if (['POST', 'DELETE', 'PATCH', 'PUT'].includes(method)) {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
-    } else {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
-    }
-  })
-
-  // Seed localStorage with stale data that includes event id=2 (deleted remotely)
-  await page.addInitScript(() => {
-    localStorage.setItem('sincronia_events', JSON.stringify([
-      { id: 1, title: 'Evento Correto', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null },
-      { id: 2, title: 'Evento Deletado', description: '', date: '2026-05-22', time_start: '14:00', time_end: '15:00', category_id: 'trabalho', subcategory_id: 'reuniao', recurrence: null, exceptions: {}, reminder: null }
-    ]))
-    localStorage.setItem('sincronia_categories', JSON.stringify([
-      { id: 'pessoal', name: 'Pessoal', colorCode: '#10b981', subcategories: [{ id: 'lazer', name: 'Lazer' }] },
-      { id: 'trabalho', name: 'Trabalho', colorCode: '#3b82f6', subcategories: [{ id: 'reuniao', name: 'Reunião' }] }
-    ]))
-    localStorage.setItem('theme', 'light')
-    localStorage.setItem('sincronia_fixedDate', '2026-05-21')
-  })
+test('S7: doSync substitui eventos locais pelos dados do Supabase', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
 
   await page.goto('/')
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).toBeVisible()
 
-  // Stale event was NEVER pushed to Supabase during onMounted
-  const pushedIds = posts.map(e => e.id)
-  expect(pushedIds).not.toContain(2)
+  await page.locator('.day-cell').filter({ hasText: '22' }).locator('.add-event-inline-btn').click()
+  await page.locator('.modal-body input[type="text"]').first().fill('Evento Local')
+  await page.locator('.modal-body input[type="time"]').first().fill('14:00')
+  await page.locator('.modal-body input[type="time"]').last().fill('15:00')
+  await page.locator('.modal-footer .btn-primary').click()
+  await expect(page.locator('.modal-overlay')).not.toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Local' })).toBeVisible()
 
-  // After load, only remote event is visible; stale event is gone
-  await expect(page.locator('.event-capsule, .event-card').filter({ hasText: 'Evento Correto' })).toBeVisible()
-  await expect(page.locator('.event-capsule, .event-card').filter({ hasText: 'Evento Deletado' })).not.toBeVisible()
+  await page.route('**/rest/v1/events?select=*&order=date.asc', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 99, title: 'Evento Remoto', description: '', date: '2026-05-22', time_start: '16:00', time_end: '17:00', category_id: 'trabalho', subcategory_id: 'reuniao', recurrence: null, exceptions: {}, reminder: null }
+      ])
+    })
+  })
 
-  // Stale event was STILL not pushed
-  const pushedIdsAfterSync = posts.map(e => e.id)
-  expect(pushedIdsAfterSync).not.toContain(2)
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  await expect(eventCards.filter({ hasText: 'Evento Remoto' })).toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).not.toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Local' })).not.toBeVisible()
 })
+
+test('S8: doSync pull incorpora evento adicionado por outro device', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
+  await page.goto('/')
+
+  // Register route for events GET doSync will call
+  await page.route('**/rest/v1/events?select=*&order=date.asc', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 1, title: 'Evento Teste', description: '', date: '2026-05-21', time_start: '10:00', time_end: '11:00', category_id: 'pessoal', subcategory_id: 'lazer', recurrence: null, exceptions: {}, reminder: null },
+        { id: 2, title: 'Evento Remoto', description: '', date: '2026-05-22', time_start: '14:00', time_end: '15:00', category_id: 'trabalho', subcategory_id: 'reuniao', recurrence: null, exceptions: {}, reminder: null }
+      ])
+    })
+  })
+
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Remoto' })).toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).toBeVisible()
+})
+
+test('S9: doSync pull remove evento deletado remotamente por outro device', async ({ page }) => {
+  const capture = []
+  await interceptSupabase(page, capture)
+  await page.goto('/')
+
+  // Register route for events GET — remote has only a substituted event
+  await page.route('**/rest/v1/events?select=*&order=date.asc', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 2, title: 'Evento Substituído', description: '', date: '2026-05-22', time_start: '14:00', time_end: '15:00', category_id: 'trabalho', subcategory_id: 'reuniao', recurrence: null, exceptions: {}, reminder: null }
+      ])
+    })
+  })
+
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1500)
+
+  const eventCards = page.locator('.event-capsule, .event-card')
+  await expect(eventCards.filter({ hasText: 'Evento Teste' })).not.toBeVisible()
+  await expect(eventCards.filter({ hasText: 'Evento Substituído' })).toBeVisible()
+})
+
+

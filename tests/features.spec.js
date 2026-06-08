@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { seedStorage, openAddModal, fillEventForm, saveEvent, editFirstEventCard, confirmRecurrenceAction } from './helpers.js'
+import { seedStorage, openAddModal, fillEventForm, saveEvent, editFirstEventCard, confirmRecurrenceAction, interceptSupabase } from './helpers.js'
 
 test.beforeEach(async ({ page }) => {
   await seedStorage(page, {
@@ -134,11 +134,12 @@ test('H16: série completa lista instâncias corretas', async ({ page }) => {
   await expect(rows.first()).toBeVisible()
 })
 
-test('F1: evento salvo e visivel no calendario', async ({ page }) => {
+test('F1: evento salvo persiste no Supabase', async ({ page }) => {
+  const capture = []
   await seedStorage(page)
+  await interceptSupabase(page, capture)
   await page.goto('/')
 
-  // Create a new event
   await page.locator('.day-cell').filter({ hasText: '22' }).locator('.add-event-inline-btn').click()
   await page.locator('.modal-body input[type="text"]').first().fill('Evento F1')
   await page.locator('.modal-body input[type="time"]').first().fill('09:00')
@@ -146,4 +147,7 @@ test('F1: evento salvo e visivel no calendario', async ({ page }) => {
   await page.locator('.modal-footer .btn-primary').click()
   await expect(page.locator('.modal-overlay')).not.toBeVisible()
   await expect(page.locator('.event-capsule, .event-card').filter({ hasText: 'Evento F1' })).toBeVisible()
+
+  const posted = capture.flat()
+  expect(posted.some(e => e.title === 'Evento F1')).toBeTruthy()
 })

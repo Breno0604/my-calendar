@@ -1,0 +1,1 @@
+// pending-ops.js removed — 100% online, no localStorage offline queue

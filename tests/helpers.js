@@ -5,7 +5,7 @@ const defaultCategories = [
   { id: 'trabalho', name: 'Trabalho', colorCode: '#3b82f6', subcategories: [{ id: 'reuniao', name: 'Reunião' }, { id: 'projeto', name: 'Projeto' }, { id: 'desenvolvimento', name: 'Desenvolvimento' }] }
 ]
 
-/* Convert event from camelCase to snake_case (Supabase DB format). */
+/* Convert event from app format (camelCase) to Supabase format (snake_case). */
 function toEventSnakeCase(e) {
   return {
     ...e,
@@ -16,7 +16,7 @@ function toEventSnakeCase(e) {
   }
 }
 
-/* Convert category from camelCase to snake_case (Supabase DB format). */
+/* Convert category from app format (camelCase) to Supabase format (snake_case). */
 function toCategorySnakeCase(c) {
   return { ...c, color_code: c.colorCode }
 }
@@ -32,7 +32,8 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
     }
   }, { theme, fixedDate })
 
-  // Mock Supabase REST — return seeded data in snake_case (Supabase DB format).
+  // Mock Supabase REST — return seeded data in snake_case (Supabase format).
+  // Use route.fallback() to allow other routes (like interceptSupabase) to handle requests.
   await page.route(/127\.0\.0\.1:9999/, async route => {
     const url = route.request().url()
     const method = route.request().method()
@@ -43,7 +44,7 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
     } else if (['POST', 'DELETE', 'PATCH', 'PUT'].includes(method) && url.includes('/rest/v1/')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
     } else {
-      await route.abort('connectionrefused')
+      await route.fallback()
     }
   })
 }
@@ -108,7 +109,8 @@ export async function interceptSupabase(page, capture, options = {}) {
     } else if (method === 'GET' && url.includes('categories?select=id')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(initialCategoryIds) })
     } else if (method === 'GET') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+      // Use fallback to allow seedStorage to handle GET requests
+      await route.fallback()
     } else {
       if (method === 'POST') {
         const body = route.request().postDataJSON()

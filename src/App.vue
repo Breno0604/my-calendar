@@ -9,7 +9,6 @@ import * as mockService from './services/mock.js'
 import * as ioService from './services/io.js'
 import * as dbService from './services/db.js'
 import { getSupabase } from './lib/supabaseClient.js'
-
 import { version } from '../package.json'
 
 // --- State & Config ---
@@ -233,7 +232,7 @@ const generateMockEvents = () => {
 
 // --- Lifecycle & Persistence ---
 
-onMounted(async () => {
+onMounted(() => {
   // Load Dark Mode Preference
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -247,33 +246,88 @@ onMounted(async () => {
   // Initialize filters map
   initializeFilters()
 
-  // Load data from Supabase (single source of truth)
-  const sb = getSupabase()
-  if (sb) {
-    const [evResult, catResult] = await Promise.all([
-      dbService.loadEvents(sb),
-      dbService.loadCategories(sb)
-    ])
-    if (evResult.success) {
-      events.value = evResult.data
-    }
-    if (catResult.success) {
-      categoriesData.value = catResult.data
-    }
-  } else {
-    // No Supabase configured — use mock data
-    events.value = generateMockEvents()
-  }
-
   // Initialize infinite scroll months
   initInfiniteScroll()
+
+  // Load data from Supabase (sole source of truth)
+  const sb = getSupabase()
+  if (sb) {
+    dbService.fetchCategories(sb).then(catResult => {
+      if (catResult.success && catResult.data.length > 0) {
+        categoriesData.value = catResult.data
+      }
+    })
+    dbService.fetchEvents(sb).then(evResult => {
+      if (evResult.success && evResult.data.length > 0) {
+        events.value = evResult.data.map(e => ({
+          ...e,
+          timeStart: e.timeStart || e.time_start,
+          timeEnd: e.timeEnd || e.time_end,
+          categoryId: e.categoryId || e.category_id,
+          subcategoryId: e.subcategoryId || e.subcategory_id
+        }))
+      }
+    })
+  } else {
+    events.value = generateMockEvents()
+  }
 
   // Keyboard shortcuts listener
   window.addEventListener('keydown', handleKeydown)
 
   // Notification permission + reminder interval
   ioService.requestNotificationPermission(Notification)
+  syncReminderInterval()
   checkReminders()
+
+  // --- Sync setup (multi-device) ---
+  if (sb) {
+    const shouldSync = () => !showModal.value
+
+    let syncing = false
+
+    const doSync = async () => {
+      if (!shouldSync() || syncing) return
+      syncing = true
+
+      const r = await Promise.all([
+        dbService.fetchEvents(sb),
+        dbService.fetchCategories(sb)
+      ])
+
+      if (r[0].success && r[0].data.length > 0) {
+        events.value = r[0].data.map(e => ({
+          ...e,
+          timeStart: e.timeStart || e.time_start,
+          timeEnd: e.timeEnd || e.time_end,
+          categoryId: e.categoryId || e.category_id,
+          subcategoryId: e.subcategoryId || e.subcategory_id
+        }))
+      }
+
+      if (r[1].success && r[1].data.length > 0) {
+        categoriesData.value = r[1].data
+      }
+      syncing = false
+    }
+
+    const onRealtimeChange = () => {
+      if (!syncing) doSync()
+    }
+
+    // Visibility change (tab switch)
+    onVisibility = () => {
+      if (document.visibilityState === 'visible') doSync()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    // Periodic polling (30s)
+    pollId = setInterval(doSync, 30000)
+
+    // Realtime subscriptions
+    dbService.subscribeToTable(sb, 'events', onRealtimeChange)
+    dbService.subscribeToTable(sb, 'categories', onRealtimeChange)
+  }
 })
 
 const saveCategoriesToStorage = async () => {
@@ -520,21 +574,14 @@ const saveNewEvent = async () => {
   }
 
   checkConflictsBeforeSave(async () => {
+    events.value.push(newEv)
+
     const sb = getSupabase()
     if (sb) {
-      const result = await dbService.saveEvents(sb, [newEv])
-      if (result.success) {
-        events.value.push(newEv)
-        showAddModal.value = false
-        addToast('Compromisso criado com sucesso', 'success')
-        return
-      }
-      addToast('Erro ao salvar no servidor', 'error')
-    } else {
-      events.value.push(newEv)
-      showAddModal.value = false
-      addToast('Compromisso criado com sucesso', 'success')
+      await dbService.saveEvents(sb, [newEv]).catch(() => {})
     }
+    showAddModal.value = false
+    addToast('Compromisso criado com sucesso', 'success')
   })
 }
 
@@ -555,7 +602,7 @@ const saveEditedEvent = async () => {
         master.exceptions[editingExceptionDate.value] = exc
         events.value = [...events.value]
         const sb = getSupabase()
-        if (sb) await dbService.saveEvents(sb, [master]).catch(() => {})
+        if (sb) { await dbService.saveEvents(sb, [master]).catch(() => {}) }
       }
       editingExceptionDate.value = null
       showEditModal.value = false
@@ -570,22 +617,14 @@ const saveEditedEvent = async () => {
       ...eventForm.value,
       recurrence: buildRecurrence()
     }
+    events.value[index] = editedEv
 
     const sb = getSupabase()
     if (sb) {
-      const result = await dbService.saveEvents(sb, [editedEv])
-      if (result.success) {
-        events.value[index] = editedEv
-        showEditModal.value = false
-        addToast('Compromisso atualizado com sucesso', 'success')
-        return
-      }
-      addToast('Erro ao salvar no servidor', 'error')
-    } else {
-      events.value[index] = editedEv
-      showEditModal.value = false
-      addToast('Compromisso atualizado com sucesso', 'success')
+      await dbService.saveEvents(sb, [editedEv]).catch(() => {})
     }
+    showEditModal.value = false
+    addToast('Compromisso atualizado com sucesso', 'success')
   })
 }
 
@@ -596,32 +635,26 @@ const deleteEvent = () => {
   showEditModal.value = false
 }
 
-const handleRecurrenceConfirm = async (choice) => {
+const handleRecurrenceConfirm = (choice) => {
   if (!recurrencePending.value) return
   const { event, action } = recurrencePending.value
 
   if (action === 'delete') {
     const masterId = event._masterId
-    const sb = getSupabase()
-    if (sb) {
-      if (choice === 'all') {
-        const { error } = await sb.from('events').delete().eq('id', masterId)
-        if (error) { addToast('Erro ao excluir série', 'error'); return }
-      } else {
-        const master = events.value.find(e => e.id === masterId)
-        if (master) {
-          if (!master.exceptions) master.exceptions = {}
-          master.exceptions[event.date] = { deleted: true }
-          const result = await dbService.saveEvents(sb, [master])
-          if (!result.success) { addToast('Erro ao excluir ocorrência', 'error'); return }
-        }
-      }
-    }
     const result = choice === 'all'
       ? deleteSeries(masterId, events.value)
       : deleteOneInstance(masterId, event.date, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
+    const sb = getSupabase()
+    if (sb) {
+      if (choice === 'all') {
+        sb.from('events').delete().eq('id', masterId).then(() => {}, () => {})
+      } else {
+        const master = events.value.find(e => e.id === masterId)
+        if (master) dbService.saveEvents(sb, [master]).catch(() => {})
+      }
+    }
     addToast(choice === 'all' ? 'Série de compromissos excluída' : 'Ocorrência excluída', 'success')
     showEditModal.value = false
   } else if (action === 'edit') {
@@ -639,30 +672,21 @@ const handleRecurrenceConfirm = async (choice) => {
     showEditModal.value = true
   } else if (action === 'move') {
     const masterId = event._masterId
-    const sb = getSupabase()
-    if (sb) {
-      const master = events.value.find(e => e.id === masterId)
-      if (master) {
-        if (choice === 'all') {
-          master.date = event.proposedDate
-          const result = await dbService.saveEvents(sb, [master])
-          if (!result.success) { addToast('Erro ao mover série', 'error'); return }
-        } else {
-          if (!master.exceptions) master.exceptions = {}
-          master.exceptions[event.date] = { deleted: true }
-          const movedEv = { ...master, id: Date.now(), date: event.proposedDate, _isRecurringInstance: false, recurrence: null, exceptions: {} }
-          delete movedEv._masterId
-          const result = await dbService.saveEvents(sb, [master, movedEv])
-          if (!result.success) { addToast('Erro ao mover ocorrência', 'error'); return }
-        }
-      }
-    }
     const existingIds = new Set(events.value.map(e => e.id))
     const result = choice === 'all'
       ? moveSeries(masterId, event.proposedDate, events.value)
       : moveOneInstance(masterId, event.date, event.proposedDate, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
+    const sb = getSupabase()
+    if (sb) {
+      const master = events.value.find(e => e.id === masterId)
+      if (master) dbService.saveEvents(sb, [master]).catch(() => {})
+      if (choice === 'one') {
+        const newInstance = events.value.find(e => !existingIds.has(e.id))
+        if (newInstance) dbService.saveEvents(sb, [newInstance]).catch(() => {})
+      }
+    }
     addToast('Compromisso movido para ' + event.proposedDate, 'success')
   }
 
@@ -670,7 +694,7 @@ const handleRecurrenceConfirm = async (choice) => {
   recurrencePending.value = null
 }
 
-const handleDeleteClick = async () => {
+const handleDeleteClick = () => {
   if (editingExceptionDate.value) {
     const master = events.value.find(e => e.id === eventForm.value.id)
     if (master) {
@@ -678,7 +702,7 @@ const handleDeleteClick = async () => {
       master.exceptions[editingExceptionDate.value] = { deleted: true }
       events.value = [...events.value]
       const sb = getSupabase()
-      if (sb) await dbService.saveEvents(sb, [master]).catch(() => {})
+      if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
     }
     editingExceptionDate.value = null
     showEditModal.value = false
@@ -746,7 +770,7 @@ const addCategory = () => {
   addToast('Categoria criada com sucesso', 'success')
 }
 
-const confirmDeleteCategory = async () => {
+const confirmDeleteCategory = () => {
   const catId = pendingDeleteCatId.value
   if (!catId) return
   categoriesData.value = categoriesData.value.filter(c => c.id !== catId)
@@ -761,9 +785,9 @@ const confirmDeleteCategory = async () => {
   const sb = getSupabase()
   if (sb) {
     const affected = events.value.filter(e => affectedIds.has(e.id))
-    if (affected.length) await dbService.saveEvents(sb, affected).catch(() => {})
+    if (affected.length) dbService.saveEvents(sb, affected).catch(() => {})
   }
-  await saveCategoriesToStorage()
+  saveCategoriesToStorage()
   addToast('Categoria excluída com sucesso', 'success')
   showDeleteConfirm.value = false
   pendingDeleteCatId.value = null
@@ -796,7 +820,7 @@ const addSubcategory = (catId) => {
   }
 }
 
-const deleteSubcategory = async (catId, subId) => {
+const deleteSubcategory = (catId, subId) => {
   const cat = categoriesData.value.find(c => c.id === catId)
   if (cat) {
     if (confirm('Deseja realmente excluir esta subcategoria?')) {
@@ -809,9 +833,9 @@ const deleteSubcategory = async (catId, subId) => {
       const sb = getSupabase()
       if (sb) {
         const affected = events.value.filter(e => affectedIds.has(e.id))
-        if (affected.length) await dbService.saveEvents(sb, affected).catch(() => {})
+        if (affected.length) dbService.saveEvents(sb, affected).catch(() => {})
       }
-      await saveCategoriesToStorage()
+      saveCategoriesToStorage()
       addToast('Subcategoria excluída', 'info')
     }
   }
@@ -879,41 +903,35 @@ const deletedStack = ref([])
 const undoDelete = async () => {
   const item = deletedStack.value.pop()
   if (!item) return
+  events.value.push(item.event)
 
   const sb = getSupabase()
   if (sb) {
-    const result = await dbService.saveEvents(sb, [item.event])
-    if (result.success) {
-      events.value.push(item.event)
-      addToast('Exclusão desfeita', 'info', 3000)
-      return
-    }
-    addToast('Erro ao restaurar evento', 'error')
-  } else {
-    events.value.push(item.event)
-    addToast('Exclusão desfeita', 'info', 3000)
+    await dbService.saveEvents(sb, [item.event]).catch(() => {})
   }
+  addToast('Exclusão desfeita', 'info', 3000)
 }
 const undoableDelete = async (event) => {
+  events.value = events.value.filter(e => e.id !== event.id)
+
   const sb = getSupabase()
   if (sb) {
-    const { error } = await sb.from('events').delete().eq('id', event.id)
-    if (!error) {
-      events.value = events.value.filter(e => e.id !== event.id)
-      deletedStack.value.push({ event, timestamp: Date.now() })
-      addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })
-      setTimeout(() => {
-        const idx = deletedStack.value.findIndex(d => d.event.id === event.id)
-        if (idx !== -1) deletedStack.value.splice(idx, 1)
-      }, 30000)
-      return
-    }
-    addToast('Erro ao excluir no servidor', 'error')
-  } else {
-    events.value = events.value.filter(e => e.id !== event.id)
-    deletedStack.value.push({ event, timestamp: Date.now() })
-    addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+    const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+    await fetch(`${supabaseUrl}/rest/v1/events?id=eq.${event.id}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      }
+    }).catch(() => {})
   }
+  deletedStack.value.push({ event, timestamp: Date.now() })
+  addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })
+  setTimeout(() => {
+    const idx = deletedStack.value.findIndex(d => d.event.id === event.id)
+    if (idx !== -1) deletedStack.value.splice(idx, 1)
+  }, 30000)
 }
 
 // --- Conflict Detection ---
@@ -963,7 +981,7 @@ const onDragLeave = () => {
   dragOverDate.value = null
 }
 
-const onDrop = async (cell, e) => {
+const onDrop = (cell, e) => {
   e.preventDefault()
   if (!draggedEvent.value) return
   const targetDate = cell.dateString
@@ -978,21 +996,11 @@ const onDrop = async (cell, e) => {
     recurrencePending.value = { event: { ...draggedEvent.value, proposedDate: targetDate }, action: 'move' }
     showRecurrenceConfirm.value = true
   } else {
+    master.date = targetDate
+    events.value = [...events.value]
     const sb = getSupabase()
-    if (sb) {
-      master.date = targetDate
-      const result = await dbService.saveEvents(sb, [master])
-      if (result.success) {
-        events.value = [...events.value]
-        addToast('Compromisso movido para ' + targetDate, 'success')
-      } else {
-        addToast('Erro ao mover compromisso', 'error')
-      }
-    } else {
-      master.date = targetDate
-      events.value = [...events.value]
-      addToast('Compromisso movido para ' + targetDate, 'success')
-    }
+    if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
+    addToast('Compromisso movido para ' + targetDate, 'success')
   }
   draggedEvent.value = null
   dragOverDate.value = null
@@ -1008,7 +1016,7 @@ const onResizeMouseMove = (me) => {
   }
 }
 
-const onResizeMouseUp = async () => {
+const onResizeMouseUp = () => {
   if (resizingEvent.value && resizingEvent.value._resizeEnd) {
     const master = events.value.find(e => e.id === (resizingEvent.value._masterId || resizingEvent.value.id))
     if (master) {
@@ -1018,19 +1026,10 @@ const onResizeMouseUp = async () => {
       } else {
         master.timeEnd = resizingEvent.value._resizeEnd
       }
+      events.value = [...events.value]
       const sb = getSupabase()
-      if (sb) {
-        const result = await dbService.saveEvents(sb, [master])
-        if (result.success) {
-          events.value = [...events.value]
-          addToast('Horário ajustado', 'info', 2000)
-        } else {
-          addToast('Erro ao ajustar horário', 'error')
-        }
-      } else {
-        events.value = [...events.value]
-        addToast('Horário ajustado', 'info', 2000)
-      }
+      if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
+      addToast('Horário ajustado', 'info', 2000)
     }
   }
   resizingEvent.value = null
@@ -1076,8 +1075,22 @@ const handleKeydown = (e) => {
   }
 }
 
+// --- Sync state ---
+let pollId = null
+let onVisibility = null
+
 // --- Reminders ---
 let reminderInterval = null
+const syncReminderInterval = () => {
+  const hasReminders = events.value.some(e => e.reminder?.enabled)
+  if (hasReminders && !reminderInterval) {
+    reminderInterval = setInterval(checkReminders, 30000)
+    checkReminders()
+  } else if (!hasReminders && reminderInterval) {
+    clearInterval(reminderInterval)
+    reminderInterval = null
+  }
+}
 const checkReminders = () => {
   if (!('Notification' in window) || Notification.permission !== 'granted') return
   const today = toDateString(new Date())
@@ -1090,6 +1103,8 @@ const checkReminders = () => {
     ioService.fireNotification(e.title, `${e.timeStart} — ${e.description || 'Sem descrição'}`, 'sincronia-reminder-' + e.id, Notification)
   })
 }
+watch(events, syncReminderInterval, { deep: false })
+
 // --- Export / Import ---
 const exportData = async (format) => {
   const data = events.value.map(e => ({
@@ -1125,24 +1140,15 @@ const handleImportFile = (e) => {
   const file = e.target.files?.[0]
   if (!file) return
   const reader = new FileReader()
-  reader.onload = async (evt) => {
+  reader.onload = (evt) => {
     const text = evt.target.result
     const parseResult = ioService.parseCSV(text)
     if (!parseResult.success) { addToast(parseResult.error, 'error'); return }
-    const imported = parseResult.data.map(ev => ({ ...ev, id: Date.now() + Math.random() }))
+    const imported = parseResult.data
+    events.value = [...events.value, ...imported]
     const sb = getSupabase()
-    if (sb) {
-      const result = await dbService.saveEvents(sb, imported)
-      if (result.success) {
-        events.value = [...events.value, ...imported]
-        addToast(`${imported.length} evento(s) importado(s) com sucesso`, 'success')
-      } else {
-        addToast('Erro ao salvar importação no servidor', 'error')
-      }
-    } else {
-      events.value = [...events.value, ...imported]
-      addToast(`${imported.length} evento(s) importado(s) com sucesso`, 'success')
-    }
+    if (sb) dbService.saveEvents(sb, imported).catch(() => {})
+    addToast(`${imported.length} evento(s) importado(s) com sucesso`, 'success')
   }
   reader.onerror = () => addToast('Erro ao ler arquivo. Verifique se é um CSV válido.', 'error')
   reader.readAsText(file)
@@ -1152,6 +1158,9 @@ const handleImportFile = (e) => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   if (reminderInterval) clearInterval(reminderInterval)
+  document.removeEventListener('visibilitychange', onVisibility)
+  if (pollId) clearInterval(pollId)
+  dbService.unsubscribeAll()
 })
 </script>
 

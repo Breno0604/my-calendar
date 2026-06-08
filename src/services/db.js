@@ -1,6 +1,6 @@
 /**
  * @module services/db
- * Supabase persistence layer.
+ * Supabase persistence layer (100% online).
  * All functions follow the { success, data, error } contract pattern.
  */
 
@@ -50,7 +50,7 @@ function mapEventToDb(e) {
 }
 
 /**
- * Loads all events from Supabase.
+ * Loads all events from Supabase (no fallback).
  * @param {Object} supabase
  * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
  */
@@ -65,6 +65,24 @@ export async function loadEvents(supabase) {
     return { success: true, data: mapped, error: null }
   } catch (err) {
     return { success: false, data: [], error: `loadEvents: ${err.message}` }
+  }
+}
+
+/**
+ * Fetches events directly from Supabase (no fallback). Used for sync.
+ * @param {Object} supabase
+ * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
+ */
+export async function fetchEvents(supabase) {
+  if (!supabase || typeof supabase.from !== 'function') {
+    return { success: false, data: [], error: 'Supabase client inválido' }
+  }
+  try {
+    const { data, error } = await supabase.from('events').select('*').order('date', { ascending: true })
+    if (error) throw error
+    return { success: true, data: (data || []).map(mapEventFromDb), error: null }
+  } catch (err) {
+    return { success: false, data: [], error: `fetchEvents: ${err.message}` }
   }
 }
 
@@ -124,7 +142,7 @@ function mapCategoryToDb(cat) {
 }
 
 /**
- * Loads all categories from Supabase.
+ * Loads all categories from Supabase (no fallback).
  * @param {Object} supabase
  * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
  */
@@ -139,6 +157,25 @@ export async function loadCategories(supabase) {
     return { success: true, data: mapped, error: null }
   } catch (err) {
     return { success: false, data: [], error: `loadCategories: ${err.message}` }
+  }
+}
+
+/**
+ * Fetches categories directly from Supabase (no fallback). Used for sync.
+ * @param {Object} supabase
+ * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
+ */
+export async function fetchCategories(supabase) {
+  if (!supabase || typeof supabase.from !== 'function') {
+    return { success: false, data: [], error: 'Supabase client inválido' }
+  }
+  try {
+    const { data, error } = await supabase.from('categories').select('*')
+    if (error) throw error
+    const mapped = (data || []).map(mapCategoryFromDb)
+    return { success: true, data: mapped, error: null }
+  } catch (err) {
+    return { success: false, data: [], error: `fetchCategories: ${err.message}` }
   }
 }
 
