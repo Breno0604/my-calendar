@@ -1,6 +1,6 @@
 /**
  * @module services/db
- * Supabase persistence layer (with localStorage fallback).
+ * Supabase persistence layer (100% online).
  * All functions follow the { success, data, error } contract pattern.
  */
 
@@ -50,12 +50,11 @@ function mapEventToDb(e) {
 }
 
 /**
- * Loads all events from Supabase with localStorage fallback.
+ * Loads all events from Supabase (no fallback).
  * @param {Object} supabase
- * @param {Object} [storage=localStorage]
  * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
  */
-export async function loadEvents(supabase, storage = localStorage) {
+export async function loadEvents(supabase) {
   if (!supabase || typeof supabase.from !== 'function') {
     return { success: false, data: [], error: 'Supabase client inválido' }
   }
@@ -65,12 +64,6 @@ export async function loadEvents(supabase, storage = localStorage) {
     const mapped = (data || []).map(mapEventFromDb)
     return { success: true, data: mapped, error: null }
   } catch (err) {
-    try {
-      const raw = storage.getItem('sincronia_events')
-      if (raw) {
-        return { success: true, data: JSON.parse(raw), error: null }
-      }
-    } catch (_) {}
     return { success: false, data: [], error: `loadEvents: ${err.message}` }
   }
 }
@@ -149,12 +142,11 @@ function mapCategoryToDb(cat) {
 }
 
 /**
- * Loads all categories from Supabase with localStorage fallback.
+ * Loads all categories from Supabase (no fallback).
  * @param {Object} supabase
- * @param {Object} [storage=localStorage]
  * @returns {Promise<{ success: boolean, data: Array, error: string|null }>}
  */
-export async function loadCategories(supabase, storage = localStorage) {
+export async function loadCategories(supabase) {
   if (!supabase || typeof supabase.from !== 'function') {
     return { success: false, data: [], error: 'Supabase client inválido' }
   }
@@ -164,12 +156,6 @@ export async function loadCategories(supabase, storage = localStorage) {
     const mapped = (data || []).map(mapCategoryFromDb)
     return { success: true, data: mapped, error: null }
   } catch (err) {
-    try {
-      const raw = storage.getItem('sincronia_categories')
-      if (raw) {
-        return { success: true, data: JSON.parse(raw), error: null }
-      }
-    } catch (_) {}
     return { success: false, data: [], error: `loadCategories: ${err.message}` }
   }
 }

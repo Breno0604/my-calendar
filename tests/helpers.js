@@ -26,18 +26,18 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
   const dbEvents = events.map(toEventSnakeCase)
   const dbCats = cats.map(toCategorySnakeCase)
   await page.addInitScript((args) => {
-    localStorage.setItem('sincronia_events', JSON.stringify(args.events))
-    localStorage.setItem('sincronia_categories', JSON.stringify(args.categories))
     localStorage.setItem('theme', args.theme)
     if (args.fixedDate) {
       localStorage.setItem('sincronia_fixedDate', args.fixedDate)
     }
-  }, { events: dbEvents, categories: dbCats, theme, fixedDate })
+  }, { theme, fixedDate })
 
   // Mock Supabase REST — return seeded data in snake_case (Supabase format).
+  // Use route.fallback() to allow other routes (like interceptSupabase) to handle requests.
   await page.route(/127\.0\.0\.1:9999/, async route => {
     const url = route.request().url()
     const method = route.request().method()
+    console.log('[seedStorage route]', method, url)
     if (method === 'GET' && url.includes('/rest/v1/events')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dbEvents) })
     } else if (method === 'GET' && url.includes('/rest/v1/categories')) {
@@ -45,7 +45,7 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
     } else if (['POST', 'DELETE', 'PATCH', 'PUT'].includes(method) && url.includes('/rest/v1/')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
     } else {
-      await route.abort('connectionrefused')
+      await route.fallback()
     }
   })
 }
@@ -110,7 +110,8 @@ export async function interceptSupabase(page, capture, options = {}) {
     } else if (method === 'GET' && url.includes('categories?select=id')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(initialCategoryIds) })
     } else if (method === 'GET') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+      // Use fallback to allow seedStorage to handle GET requests
+      await route.fallback()
     } else {
       if (method === 'POST') {
         const body = route.request().postDataJSON()

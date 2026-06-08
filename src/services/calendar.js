@@ -214,9 +214,9 @@ export function buildMiniCalendarDays(currentDate) {
  */
 export function initInfiniteScrollData(todayStr) {
   try {
-    const now = new Date()
-    const currentYear = now.getFullYear()
-    const currentMonth = now.getMonth()
+    const d = todayStr ? new Date(todayStr + 'T12:00:00') : new Date()
+    const currentYear = d.getFullYear()
+    const currentMonth = d.getMonth()
     const months = [
       buildMonthCells(currentYear, currentMonth - 1, todayStr),
       buildMonthCells(currentYear, currentMonth, todayStr),

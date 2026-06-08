@@ -9,7 +9,6 @@ import * as mockService from './services/mock.js'
 import * as ioService from './services/io.js'
 import * as dbService from './services/db.js'
 import { getSupabase } from './lib/supabaseClient.js'
-import * as pendingOpsService from './services/pending-ops.js'
 import { version } from '../package.json'
 
 // --- State & Config ---
@@ -108,7 +107,6 @@ const resetFilters = () => {
 
 // --- Events State ---
 const events = ref([])
-const pendingOps = ref([])
 
 // --- Modals Toggles ---
 const showAddModal = ref(false)
@@ -248,52 +246,31 @@ onMounted(() => {
   // Initialize filters map
   initializeFilters()
 
-  // Load Categories: localStorage for fast render, Supabase async for truth
+  // Initialize infinite scroll months
+  initInfiniteScroll()
+
+  // Load data from Supabase (sole source of truth)
   const sb = getSupabase()
-  const localCatResult = ioService.loadFromStorage('sincronia_categories', localStorage)
-  if (localCatResult.success && localCatResult.data) {
-    categoriesData.value = localCatResult.data
-  }
   if (sb) {
     dbService.fetchCategories(sb).then(catResult => {
       if (catResult.success && catResult.data.length > 0) {
         categoriesData.value = catResult.data
       }
-      ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
     })
-  } else if (!localCatResult.success || !localCatResult.data) {
-    saveCategoriesToStorage()
-  }
-
-  // Load Events: localStorage for fast render, Supabase async for truth.
-  // saveToStorage is localStorage-only — stale data NEVER pushed to Supabase.
-  const localEvResult = ioService.loadFromStorage('sincronia_events', localStorage)
-  if (localEvResult.success && localEvResult.data) {
-    events.value = localEvResult.data.map(e => ({
-      ...e,
-      timeStart: e.timeStart || e.time_start,
-      timeEnd: e.timeEnd || e.time_end,
-      categoryId: e.categoryId || e.category_id,
-      subcategoryId: e.subcategoryId || e.subcategory_id
-    }))
-  }
-  if (sb) {
     dbService.fetchEvents(sb).then(evResult => {
       if (evResult.success && evResult.data.length > 0) {
-        events.value = pendingOpsService.applyPendingOps(localStorage, evResult.data)
+        events.value = evResult.data.map(e => ({
+          ...e,
+          timeStart: e.timeStart || e.time_start,
+          timeEnd: e.timeEnd || e.time_end,
+          categoryId: e.categoryId || e.category_id,
+          subcategoryId: e.subcategoryId || e.subcategory_id
+        }))
       }
-      ioService.saveToStorage('sincronia_events', events.value, localStorage)
     })
-  } else if (!localEvResult.success || !localEvResult.data) {
+  } else {
     events.value = generateMockEvents()
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
   }
-
-  // Load pending operations from localStorage
-  pendingOps.value = pendingOpsService.getPendingOps(localStorage)
-
-  // Initialize infinite scroll months
-  initInfiniteScroll()
 
   // Keyboard shortcuts listener
   window.addEventListener('keydown', handleKeydown)
@@ -319,21 +296,22 @@ onMounted(() => {
       ])
 
       if (r[0].success && r[0].data.length > 0) {
-        events.value = pendingOpsService.applyPendingOps(localStorage, r[0].data)
-        ioService.saveToStorage('sincronia_events', events.value, localStorage)
-        processPendingOps()
+        events.value = r[0].data.map(e => ({
+          ...e,
+          timeStart: e.timeStart || e.time_start,
+          timeEnd: e.timeEnd || e.time_end,
+          categoryId: e.categoryId || e.category_id,
+          subcategoryId: e.subcategoryId || e.subcategory_id
+        }))
       }
 
       if (r[1].success && r[1].data.length > 0) {
         categoriesData.value = r[1].data
-        ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
       }
       syncing = false
     }
 
     const onRealtimeChange = () => {
-      // Debounce: if doSync is already running (e.g. from a concurrent save),
-      // skip this realtime trigger — the in-flight sync will pick up changes.
       if (!syncing) doSync()
     }
 
@@ -349,67 +327,14 @@ onMounted(() => {
     // Realtime subscriptions
     dbService.subscribeToTable(sb, 'events', onRealtimeChange)
     dbService.subscribeToTable(sb, 'categories', onRealtimeChange)
-
-    // Periodic retry of pending operations
-    pendingTimer = setInterval(() => {
-      if (pendingOps.value.length > 0) processPendingOps()
-    }, 30000)
   }
 })
 
-const saveToStorage = async () => {
-  ioService.saveToStorage('sincronia_events', events.value, localStorage)
-}
-
 const saveCategoriesToStorage = async () => {
-  ioService.saveToStorage('sincronia_categories', categoriesData.value, localStorage)
   const sb = getSupabase()
   if (sb) {
     await dbService.saveCategories(sb, categoriesData.value).catch(() => {})
   }
-}
-
-const processPendingOps = async () => {
-  const ops = pendingOps.value
-  if (ops.length === 0) return false
-  const sb = getSupabase()
-  if (!sb) return false
-
-  let anySuccess = false
-  const remaining = []
-
-  for (const op of ops) {
-    if (op.type === 'create' && op.event) {
-      const result = await dbService.saveEvents(sb, [op.event])
-      if (result.success) {
-        pendingOpsService.removePendingOp(localStorage, 'create', op.event.id)
-        anySuccess = true
-      } else {
-        remaining.push(op)
-      }
-    } else if (op.type === 'delete' && op.id) {
-      const { error } = await sb.from('events').delete().eq('id', op.id)
-      if (!error) {
-        pendingOpsService.removePendingOp(localStorage, 'delete', op.id)
-        anySuccess = true
-      } else {
-        remaining.push(op)
-      }
-    } else if (op.type === 'edit' && op.event) {
-      const result = await dbService.saveEvents(sb, [op.event])
-      if (result.success) {
-        pendingOpsService.removePendingOp(localStorage, 'edit', op.event.id)
-        anySuccess = true
-      } else {
-        remaining.push(op)
-      }
-    } else {
-      remaining.push(op)
-    }
-  }
-
-  pendingOps.value = pendingOpsService.getPendingOps(localStorage)
-  return anySuccess
 }
 
 const toggleTheme = () => {
@@ -635,7 +560,7 @@ const buildRecurrence = () => {
   return result.success ? result.data : null
 }
 
-const saveNewEvent = () => {
+const saveNewEvent = async () => {
   if (!eventForm.value.title.trim()) return
   if (!eventForm.value.date) { addToast('Selecione uma data', 'error'); return }
   if (!eventForm.value.timeStart || !eventForm.value.timeEnd) { addToast('Preencha os horários', 'error'); return }
@@ -653,27 +578,14 @@ const saveNewEvent = () => {
 
     const sb = getSupabase()
     if (sb) {
-      const result = await dbService.saveEvents(sb, [newEv])
-      if (result.success) {
-        ioService.saveToStorage('sincronia_events', events.value, localStorage)
-        showAddModal.value = false
-        addToast('Compromisso criado com sucesso', 'success')
-        return
-      }
+      await dbService.saveEvents(sb, [newEv]).catch(() => {})
     }
-
-    pendingOpsService.addPendingOp(localStorage, {
-      type: 'create', event: newEv, timestamp: Date.now()
-    })
-    pendingOps.value = pendingOpsService.getPendingOps(localStorage)
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     showAddModal.value = false
-    addToast('Salvo localmente — sincronizará quando houver conexão', 'warning', 5000)
-    processPendingOps()
+    addToast('Compromisso criado com sucesso', 'success')
   })
 }
 
-const saveEditedEvent = () => {
+const saveEditedEvent = async () => {
   if (!eventForm.value.title.trim()) return
   if (!eventForm.value.date) { addToast('Selecione uma data', 'error'); return }
   if (!eventForm.value.timeStart || !eventForm.value.timeEnd) { addToast('Preencha os horários', 'error'); return }
@@ -689,7 +601,8 @@ const saveEditedEvent = () => {
         overrideFields.forEach(f => { exc[f] = eventForm.value[f] })
         master.exceptions[editingExceptionDate.value] = exc
         events.value = [...events.value]
-        ioService.saveToStorage('sincronia_events', events.value, localStorage)
+        const sb = getSupabase()
+        if (sb) { await dbService.saveEvents(sb, [master]).catch(() => {}) }
       }
       editingExceptionDate.value = null
       showEditModal.value = false
@@ -708,23 +621,10 @@ const saveEditedEvent = () => {
 
     const sb = getSupabase()
     if (sb) {
-      const result = await dbService.saveEvents(sb, [editedEv])
-      if (result.success) {
-        ioService.saveToStorage('sincronia_events', events.value, localStorage)
-        showEditModal.value = false
-        addToast('Compromisso atualizado com sucesso', 'success')
-        return
-      }
+      await dbService.saveEvents(sb, [editedEv]).catch(() => {})
     }
-
-    pendingOpsService.addPendingOp(localStorage, {
-      type: 'edit', event: editedEv, timestamp: Date.now()
-    })
-    pendingOps.value = pendingOpsService.getPendingOps(localStorage)
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     showEditModal.value = false
-    addToast('Salvo localmente — sincronizará quando houver conexão', 'warning', 5000)
-    processPendingOps()
+    addToast('Compromisso atualizado com sucesso', 'success')
   })
 }
 
@@ -746,7 +646,6 @@ const handleRecurrenceConfirm = (choice) => {
       : deleteOneInstance(masterId, event.date, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     const sb = getSupabase()
     if (sb) {
       if (choice === 'all') {
@@ -779,7 +678,6 @@ const handleRecurrenceConfirm = (choice) => {
       : moveOneInstance(masterId, event.date, event.proposedDate, events.value)
     if (!result.success) { addToast(result.error, 'error'); return }
     events.value = result.data
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     const sb = getSupabase()
     if (sb) {
       const master = events.value.find(e => e.id === masterId)
@@ -803,7 +701,6 @@ const handleDeleteClick = () => {
       if (!master.exceptions) master.exceptions = {}
       master.exceptions[editingExceptionDate.value] = { deleted: true }
       events.value = [...events.value]
-      ioService.saveToStorage('sincronia_events', events.value, localStorage)
       const sb = getSupabase()
       if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
     }
@@ -885,7 +782,6 @@ const confirmDeleteCategory = () => {
   const affectedIds = new Set(events.value.filter(e => e.categoryId === catId).map(e => e.id))
   events.value.forEach(e => { if (e.categoryId === catId) { e.categoryId = fallbackCatId; e.subcategoryId = fallbackSubId } })
 
-  ioService.saveToStorage('sincronia_events', events.value, localStorage)
   const sb = getSupabase()
   if (sb) {
     const affected = events.value.filter(e => affectedIds.has(e.id))
@@ -934,7 +830,6 @@ const deleteSubcategory = (catId, subId) => {
       const fallbackSubId = cat.subcategories[0]?.id || ''
       const affectedIds = new Set(events.value.filter(e => e.categoryId === catId && e.subcategoryId === subId).map(e => e.id))
       events.value.forEach(e => { if (e.categoryId === catId && e.subcategoryId === subId) { e.subcategoryId = fallbackSubId } })
-      ioService.saveToStorage('sincronia_events', events.value, localStorage)
       const sb = getSupabase()
       if (sb) {
         const affected = events.value.filter(e => affectedIds.has(e.id))
@@ -1010,51 +905,25 @@ const undoDelete = async () => {
   if (!item) return
   events.value.push(item.event)
 
-  pendingOpsService.removePendingOp(localStorage, 'delete', item.event.id)
-
   const sb = getSupabase()
   if (sb) {
-    const result = await dbService.saveEvents(sb, [item.event])
-    if (result.success) {
-      ioService.saveToStorage('sincronia_events', events.value, localStorage)
-      addToast('Exclusão desfeita', 'info', 3000)
-      return
-    }
+    await dbService.saveEvents(sb, [item.event]).catch(() => {})
   }
-
-  pendingOpsService.addPendingOp(localStorage, {
-    type: 'create', event: item.event, timestamp: Date.now()
-  })
-  pendingOps.value = pendingOpsService.getPendingOps(localStorage)
-  ioService.saveToStorage('sincronia_events', events.value, localStorage)
-  addToast('Exclusão desfeita — sincronizará quando houver conexão', 'warning', 5000)
+  addToast('Exclusão desfeita', 'info', 3000)
 }
 const undoableDelete = async (event) => {
   events.value = events.value.filter(e => e.id !== event.id)
 
   const sb = getSupabase()
   if (sb) {
-    const { error } = await sb.from('events').delete().eq('id', event.id)
-    if (!error) {
-      ioService.saveToStorage('sincronia_events', events.value, localStorage)
-      deletedStack.value.push({ event, timestamp: Date.now() })
-      addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })
-      setTimeout(() => {
-        const idx = deletedStack.value.findIndex(d => d.event.id === event.id)
-        if (idx !== -1) deletedStack.value.splice(idx, 1)
-      }, 30000)
-      return
-    }
+    await sb.from('events').delete().eq('id', event.id).catch(() => {})
   }
-
-  pendingOpsService.addPendingOp(localStorage, {
-    type: 'delete', id: event.id, timestamp: Date.now()
-  })
-  pendingOps.value = pendingOpsService.getPendingOps(localStorage)
-  ioService.saveToStorage('sincronia_events', events.value, localStorage)
   deletedStack.value.push({ event, timestamp: Date.now() })
-  addToast('Exclusão salva localmente — sincronizará quando houver conexão', 'warning', 5000)
-  processPendingOps()
+  addToast('Compromisso excluído', 'undo', 5000, { label: 'Desfazer', handler: undoDelete })
+  setTimeout(() => {
+    const idx = deletedStack.value.findIndex(d => d.event.id === event.id)
+    if (idx !== -1) deletedStack.value.splice(idx, 1)
+  }, 30000)
 }
 
 // --- Conflict Detection ---
@@ -1121,7 +990,6 @@ const onDrop = (cell, e) => {
   } else {
     master.date = targetDate
     events.value = [...events.value]
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     const sb = getSupabase()
     if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
     addToast('Compromisso movido para ' + targetDate, 'success')
@@ -1151,7 +1019,6 @@ const onResizeMouseUp = () => {
         master.timeEnd = resizingEvent.value._resizeEnd
       }
       events.value = [...events.value]
-      ioService.saveToStorage('sincronia_events', events.value, localStorage)
       const sb = getSupabase()
       if (sb) dbService.saveEvents(sb, [master]).catch(() => {})
       addToast('Horário ajustado', 'info', 2000)
@@ -1203,7 +1070,6 @@ const handleKeydown = (e) => {
 // --- Sync state ---
 let pollId = null
 let onVisibility = null
-let pendingTimer = null
 
 // --- Reminders ---
 let reminderInterval = null
@@ -1272,7 +1138,6 @@ const handleImportFile = (e) => {
     if (!parseResult.success) { addToast(parseResult.error, 'error'); return }
     const imported = parseResult.data
     events.value = [...events.value, ...imported]
-    ioService.saveToStorage('sincronia_events', events.value, localStorage)
     const sb = getSupabase()
     if (sb) dbService.saveEvents(sb, imported).catch(() => {})
     addToast(`${imported.length} evento(s) importado(s) com sucesso`, 'success')

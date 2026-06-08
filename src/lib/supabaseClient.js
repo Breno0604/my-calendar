@@ -10,7 +10,9 @@ export function getSupabase() {
     if (!supabaseUrl || !supabasePublishableKey) {
       return null
     }
-    _client = createClient(supabaseUrl, supabasePublishableKey)
+    _client = createClient(supabaseUrl, supabasePublishableKey, {
+      realtime: { params: { heartbeatIntervalMs: 0 } }
+    })
   }
   return _client
 }
