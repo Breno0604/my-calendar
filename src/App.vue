@@ -44,6 +44,8 @@ const isTestEnvironment = () => {
   return supabaseUrl === 'http://127.0.0.1:9999' || supabaseKey === 'test-mock-key'
 }
 
+const authAccessDenied = ref(false)
+
 const initAuth = async () => {
   isAuthLoading.value = true
   authError.value = null
@@ -83,16 +85,13 @@ const initAuth = async () => {
 
       if (whitelistResult.success && whitelistResult.data) {
         // Email autorizado - carregar app
-        currentUser.value = authService.getCurrentUser()
-        isAuthLoading.value = false
-      } else if (whitelistResult.error) {
-        // Erro ao verificar whitelist (tabela não existe, etc.) - modo demo
-        currentUser.value = { email: 'demo@local', name: 'Demo', avatar: null }
+        currentUser.value = await authService.getCurrentUser()
         isAuthLoading.value = false
       } else {
-        // Email não autorizado - logout
+        // Email não autorizado ou erro na verificação - negar acesso
+        authAccessDenied.value = true
         await authService.signOut()
-        authError.value = 'Acesso não autorizado. Solicite permissão ao administrador.'
+        authError.value = whitelistResult.error || 'Acesso não autorizado. Solicite permissão ao administrador.'
         isAuthLoading.value = false
       }
     } else {
@@ -104,6 +103,11 @@ const initAuth = async () => {
     // Erro inesperado - mostrar tela de login com mensagem de erro
     isAuthLoading.value = false
     authError.value = 'Erro ao verificar autenticação: ' + err.message
+  } finally {
+    // Limpar fragmento da URL para evitar que o Supabase reprocesse o token
+    if (window.location.hash && window.location.hash.includes('access_token')) {
+      history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
   }
 }
 
@@ -375,13 +379,19 @@ onMounted(async () => {
   // Setup auth state listener
   const { data: authListener } = authService.onAuthStateChange(async (event, session) => {
     if (event === 'SIGNED_IN' && session?.user) {
+      // Se o initAuth já negou acesso, ignorar eventos posteriores
+      if (authAccessDenied.value) {
+        await authService.signOut()
+        return
+      }
       const whitelistResult = await authService.checkWhitelist(session.user.email)
       
       if (whitelistResult.success && whitelistResult.data) {
-        currentUser.value = authService.getCurrentUser()
+        currentUser.value = await authService.getCurrentUser()
         authError.value = null
         await loadAppData()
       } else {
+        authAccessDenied.value = true
         await authService.signOut()
         authError.value = 'Acesso não autorizado. Solicite permissão ao administrador.'
       }

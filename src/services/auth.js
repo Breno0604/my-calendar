@@ -161,14 +161,14 @@ export async function checkWhitelist(email) {
  *   console.log('Nome:', user.name)
  * }
  */
-export function getCurrentUser() {
+export async function getCurrentUser() {
   const supabase = getSupabase()
   if (!supabase) {
     return { user: null, email: null, avatar: null, name: null }
   }
 
   // Tenta obter do cache da sessão
-  const session = supabase.auth.getSession()
+  const { data: { session } } = await supabase.auth.getSession()
   const user = session?.user
 
   if (!user) {
