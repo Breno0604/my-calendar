@@ -129,17 +129,34 @@ export async function checkWhitelist(email) {
       return { success: false, data: false, error: 'Email não fornecido' }
     }
 
-    const { data, error } = await supabase
-      .from('allowed_emails')
-      .select('email')
-      .eq('email', email.toLowerCase())
-      .single()
+    // Primeiro tenta via RPC (bypass RLS), depois fallback para query direta
+    let isAllowed = false
+    let queryError = null
 
-    if (error && error.code !== 'PGRST116') { // PGRST116 = not found
-      return { success: false, data: false, error: error.message }
+    const { data: rpcData, error: rpcError } = await supabase.rpc('check_email_allowed', {
+      p_email: email.toLowerCase()
+    })
+
+    if (!rpcError && typeof rpcData === 'boolean') {
+      isAllowed = rpcData
+    } else {
+      // Fallback: query direta (pode falhar se RLS estiver ativo)
+      const { data, error } = await supabase
+        .from('allowed_emails')
+        .select('email')
+        .eq('email', email.toLowerCase())
+        .single()
+
+      if (error && error.code !== 'PGRST116') {
+        queryError = error.message
+      } else {
+        isAllowed = !!data
+      }
     }
 
-    const isAllowed = !!data
+    if (queryError) {
+      return { success: false, data: false, error: queryError }
+    }
 
     // Cache se autorizado
     if (isAllowed) {
