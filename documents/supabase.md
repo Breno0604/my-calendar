@@ -254,3 +254,83 @@ Se algo der errado, o app automaticamente usa o localStorage como fallback — s
 
 **"Preciso instalar algo no meu computador?"**
 — Não. Tudo é feito pelo navegador nos sites do Supabase e Netlify.
+
+---
+
+## Autenticação (Google OAuth)
+
+### Passo 7 — Configurar Google Cloud Console
+
+1. Acesse [Google Cloud Console](https://console.cloud.google.com/)
+2. Crie um projeto ou selecione um existente
+3. Vá em **APIs & Services > Credentials**
+4. Clique em **Create Credentials > OAuth 2.0 Client ID**
+5. Application type: **Web application**
+6. Name: `Sincronia Calendar`
+7. Em **Authorized redirect URIs**, adicione:
+   ```
+   https://SEU-PROJETO.supabase.co/auth/v1/callback
+   ```
+   (substitua `SEU-PROJETO` pelo ID real do seu projeto Supabase)
+8. Clique em **Create**
+9. Copie o **Client ID** e **Client Secret**
+
+### Passo 8 — Ativar Google OAuth no Supabase
+
+1. Acesse seu projeto no [Supabase Dashboard](https://supabase.com/dashboard/)
+2. Vá em **Authentication > Providers**
+3. Clique em **Google**
+4. Ative a chave **Enable**
+5. Cole o **Client ID** e **Client Secret** do Google
+6. Clique em **Save**
+
+### Passo 9 — Criar tabela de whitelist
+
+No **SQL Editor** do Supabase, execute:
+
+```sql
+-- Criar tabela de emails autorizados
+CREATE TABLE allowed_emails (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  email text UNIQUE NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Habilitar RLS
+ALTER TABLE allowed_emails ENABLE ROW LEVEL SECURITY;
+
+-- Policy: usuários autenticados podem verificar seu próprio email
+CREATE POLICY "users_can_check_own_email"
+ON allowed_emails FOR SELECT
+TO authenticated
+USING (email = auth.jwt()->>'email');
+
+-- Inserir seu email (substitua pelo seu email real)
+INSERT INTO allowed_emails (email) VALUES ('seu@email.com');
+```
+
+### Passo 10 — Configurar URLs de redirecionamento
+
+1. Vá em **Authentication > URL Configuration**
+2. Em **Site URL**, confirme que está apontando para seu domínio:
+   - Local: `http://localhost:5173`
+   - Produção: `https://seu-site.netlify.app`
+3. Em **Redirect URLs**, adicione ambos os URLs acima
+
+### Passo 11 — Testar login
+
+1. Execute o app localmente: `npm run dev`
+2. Clique em "Entrar com Google"
+3. Faça login com seu email Google
+4. Verifique se foi redirecionado de volta ao app
+5. Confirme que está logado (avatar aparece na sidebar)
+
+### Passo 12 — Adicionar novos usuários
+
+Para permitir acesso a outros emails:
+
+```sql
+INSERT INTO allowed_emails (email) VALUES ('novo.usuario@email.com');
+```
+
+Ou via **Table Editor** no Supabase Dashboard.
