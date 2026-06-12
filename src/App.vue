@@ -1475,11 +1475,6 @@ onUnmounted(() => {
                 {{ cell.dayNumber }}
               </div>
             </div>
-            
-            <button @click="openAddEventModal()" class="btn-primary" style="margin-top: 12px; width: 100%;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5v14"/></svg>
-              <span>Agendar Compromisso</span>
-            </button>
           </div>
           
           <!-- Dynamic focus agenda list -->
@@ -1499,10 +1494,6 @@ onUnmounted(() => {
             <div v-if="getEventsForDate(toDateString(selectedDate)).length === 0" class="agenda-empty-state">
               <svg class="empty-state-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/><path d="m9 16 2 2 4-4"/></svg>
               <h4 class="empty-state-title">Nenhum compromisso agendado</h4>
-              <p style="font-size: 13px;">Aproveite o dia livre ou crie um novo compromisso clicando no botão abaixo.</p>
-              <button @click="openAddEventModal()" class="btn-secondary" style="margin-top: 8px;">
-                Adicionar Compromisso
-              </button>
             </div>
             
             <!-- Timed list of events -->
