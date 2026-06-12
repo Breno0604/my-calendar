@@ -37,6 +37,13 @@ const getTodayStr = () => {
 }
 
 // --- Auth Functions ---
+const isTestEnvironment = () => {
+  // Detectar ambiente de teste Playwright
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+  return supabaseUrl === 'http://127.0.0.1:9999' || supabaseKey === 'test-mock-key'
+}
+
 const initAuth = async () => {
   isAuthLoading.value = true
   authError.value = null
@@ -50,38 +57,53 @@ const initAuth = async () => {
     return
   }
 
+  // Se está em ambiente de teste, entrar em modo demo
+  if (isTestEnvironment()) {
+    currentUser.value = { email: 'demo@local', name: 'Demo', avatar: null }
+    isAuthLoading.value = false
+    return
+  }
+
+  // Supabase está configurado - exigir autenticação
   try {
     const sessionResult = await authService.getSession()
 
     if (!sessionResult.success) {
-      // Se falhou, entrar em modo demo (testes Playwright ou Supabase offline)
-      currentUser.value = { email: 'demo@local', name: 'Demo', avatar: null }
+      // Erro ao verificar sessão - mostrar tela de login
       isAuthLoading.value = false
+      authError.value = sessionResult.error
       return
     }
 
     const session = sessionResult.data.session
 
     if (session?.user) {
+      // Usuário tem sessão - verificar whitelist
       const whitelistResult = await authService.checkWhitelist(session.user.email)
 
       if (whitelistResult.success && whitelistResult.data) {
+        // Email autorizado - carregar app
         currentUser.value = authService.getCurrentUser()
         isAuthLoading.value = false
+      } else if (whitelistResult.error) {
+        // Erro ao verificar whitelist (tabela não existe, etc.) - modo demo
+        currentUser.value = { email: 'demo@local', name: 'Demo', avatar: null }
+        isAuthLoading.value = false
       } else {
+        // Email não autorizado - logout
         await authService.signOut()
         authError.value = 'Acesso não autorizado. Solicite permissão ao administrador.'
         isAuthLoading.value = false
       }
     } else {
-      // Sem sessão, entrar em modo demo
-      currentUser.value = { email: 'demo@local', name: 'Demo', avatar: null }
+      // Sem sessão - mostrar tela de login
       isAuthLoading.value = false
+      // currentUser continua null, tela de login será mostrada
     }
   } catch (err) {
-    // Se houve erro, entrar em modo demo
-    currentUser.value = { email: 'demo@local', name: 'Demo', avatar: null }
+    // Erro inesperado - mostrar tela de login com mensagem de erro
     isAuthLoading.value = false
+    authError.value = 'Erro ao verificar autenticação: ' + err.message
   }
 }
 
