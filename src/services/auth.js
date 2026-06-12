@@ -102,6 +102,13 @@ export async function signOut() {
     // Limpar cache de whitelist
     localStorage.removeItem(WHITELIST_CACHE_KEY)
 
+    // Limpar dados de sessão do Supabase no localStorage
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('sb-')) {
+        localStorage.removeItem(key)
+      }
+    }
+
     return { success: true, data: null, error: null }
   } catch (err) {
     return { success: false, data: null, error: err.message }

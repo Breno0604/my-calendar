@@ -121,6 +121,7 @@ const handleLogin = async () => {
 }
 
 const handleLogout = async () => {
+  authAccessDenied.value = false
   const result = await authService.signOut()
   
   if (result.success) {
@@ -397,6 +398,7 @@ onMounted(async () => {
       }
     } else if (event === 'SIGNED_OUT') {
       currentUser.value = null
+      authAccessDenied.value = false
     }
   })
 
