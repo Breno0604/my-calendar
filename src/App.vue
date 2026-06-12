@@ -8,7 +8,6 @@ import * as euService from './services/event-utils.js'
 import * as mockService from './services/mock.js'
 import * as ioService from './services/io.js'
 import * as dbService from './services/db.js'
-import * as authService from './services/auth.js'
 import { getSupabase } from './lib/supabaseClient.js'
 import { version } from '../package.json'
 
@@ -36,139 +35,12 @@ const getTodayStr = () => {
   return dateService.toDateString(new Date()).data || ''
 }
 
-// --- Auth Functions ---
-const isTestEnvironment = () => {
-  // Detectar ambiente de teste Playwright
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-  const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
-  return supabaseUrl === 'http://127.0.0.1:9999' || supabaseKey === 'test-mock-key'
-}
-
-const authAccessDenied = ref(false)
-
-const initAuth = async () => {
-  isAuthLoading.value = true
-  authError.value = null
-
-  const supabase = getSupabase()
-  
-  // Se não há Supabase configurado, permitir acesso demo (modo offline/testes)
-  if (!supabase) {
-    currentUser.value = { email: 'demo@local', name: 'Demo', avatar: null }
-    isAuthLoading.value = false
-    return
-  }
-
-  // Se está em ambiente de teste, entrar em modo demo
-  if (isTestEnvironment()) {
-    currentUser.value = { email: 'demo@local', name: 'Demo', avatar: null }
-    isAuthLoading.value = false
-    return
-  }
-
-  // Supabase está configurado - exigir autenticação
-  try {
-    const sessionResult = await authService.getSession()
-
-    if (!sessionResult.success) {
-      // Erro ao verificar sessão - mostrar tela de login
-      isAuthLoading.value = false
-      authError.value = sessionResult.error
-      return
-    }
-
-    const session = sessionResult.data.session
-
-    if (session?.user) {
-      // Usuário tem sessão - verificar whitelist
-      const whitelistResult = await authService.checkWhitelist(session.user.email)
-
-      if (whitelistResult.success && whitelistResult.data) {
-        // Email autorizado - carregar app
-        currentUser.value = await authService.getCurrentUser()
-        isAuthLoading.value = false
-      } else {
-        // Email não autorizado ou erro na verificação - negar acesso
-        authAccessDenied.value = true
-        await authService.signOut()
-        authError.value = whitelistResult.error || 'Acesso não autorizado. Solicite permissão ao administrador.'
-        isAuthLoading.value = false
-      }
-    } else {
-      // Sem sessão - mostrar tela de login
-      isAuthLoading.value = false
-      // currentUser continua null, tela de login será mostrada
-    }
-  } catch (err) {
-    // Erro inesperado - mostrar tela de login com mensagem de erro
-    isAuthLoading.value = false
-    authError.value = 'Erro ao verificar autenticação: ' + err.message
-  } finally {
-    // Limpar fragmento da URL para evitar que o Supabase reprocesse o token
-    if (window.location.hash && window.location.hash.includes('access_token')) {
-      history.replaceState(null, '', window.location.pathname + window.location.search)
-    }
-  }
-}
-
-const handleLogin = async () => {
-  authError.value = null
-  const result = await authService.signInWithGoogle()
-  
-  if (!result.success) {
-    authError.value = result.error
-  }
-}
-
-const handleLogout = async () => {
-  authAccessDenied.value = false
-  const result = await authService.signOut()
-  
-  if (result.success) {
-    currentUser.value = null
-    showLogoutConfirm.value = false
-  } else {
-    authError.value = result.error
-  }
-}
-
-const loadAppData = async () => {
-  initInfiniteScroll()
-
-  const sb = getSupabase()
-  if (sb) {
-    const catResult = await dbService.fetchCategories(sb)
-    if (catResult.success && catResult.data.length > 0) {
-      categoriesData.value = catResult.data
-    }
-    
-    const evResult = await dbService.fetchEvents(sb)
-    if (evResult.success && evResult.data.length > 0) {
-      events.value = evResult.data.map(e => ({
-        ...e,
-        timeStart: e.timeStart || e.time_start,
-        timeEnd: e.timeEnd || e.time_end,
-        categoryId: e.categoryId || e.category_id,
-        subcategoryId: e.subcategoryId || e.subcategory_id
-      }))
-    }
-  } else {
-    events.value = generateMockEvents()
-  }
-}
-
 const view = ref('month')
 const currentDate = ref(getInitialDate())
 const selectedDate = ref(getInitialDate())
 const searchQuery = ref('')
 const searchInput = ref(null)
 const isDarkMode = ref(false)
-
-// --- Auth State ---
-const currentUser = ref(null)
-const isAuthLoading = ref(true)
-const authError = ref(null)
-const showLogoutConfirm = ref(false)
 
 // --- Dynamic Categories Data (Default loaded/saved in LocalStorage) ---
 const categoriesData = ref([
@@ -360,7 +232,7 @@ const generateMockEvents = () => {
 
 // --- Lifecycle & Persistence ---
 
-onMounted(async () => {
+onMounted(() => {
   // Load Dark Mode Preference
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -374,37 +246,30 @@ onMounted(async () => {
   // Initialize filters map
   initializeFilters()
 
-  // Initialize auth
-  await initAuth()
+  // Initialize infinite scroll months
+  initInfiniteScroll()
 
-  // Setup auth state listener
-  const { data: authListener } = authService.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session?.user) {
-      // Se o initAuth já negou acesso, ignorar eventos posteriores
-      if (authAccessDenied.value) {
-        await authService.signOut()
-        return
+  // Load data from Supabase (sole source of truth)
+  const sb = getSupabase()
+  if (sb) {
+    dbService.fetchCategories(sb).then(catResult => {
+      if (catResult.success && catResult.data.length > 0) {
+        categoriesData.value = catResult.data
       }
-      const whitelistResult = await authService.checkWhitelist(session.user.email)
-      
-      if (whitelistResult.success && whitelistResult.data) {
-        currentUser.value = await authService.getCurrentUser()
-        authError.value = null
-        await loadAppData()
-      } else {
-        authAccessDenied.value = true
-        await authService.signOut()
-        authError.value = 'Acesso não autorizado. Solicite permissão ao administrador.'
+    })
+    dbService.fetchEvents(sb).then(evResult => {
+      if (evResult.success && evResult.data.length > 0) {
+        events.value = evResult.data.map(e => ({
+          ...e,
+          timeStart: e.timeStart || e.time_start,
+          timeEnd: e.timeEnd || e.time_end,
+          categoryId: e.categoryId || e.category_id,
+          subcategoryId: e.subcategoryId || e.subcategory_id
+        }))
       }
-    } else if (event === 'SIGNED_OUT') {
-      currentUser.value = null
-      authAccessDenied.value = false
-    }
-  })
-
-  // Se já logado, carregar dados
-  if (currentUser.value) {
-    await loadAppData()
+    })
+  } else {
+    events.value = generateMockEvents()
   }
 
   // Keyboard shortcuts listener
@@ -416,8 +281,7 @@ onMounted(async () => {
   checkReminders()
 
   // --- Sync setup (multi-device) ---
-  const sb = getSupabase()
-  if (sb && currentUser.value) {
+  if (sb) {
     const shouldSync = () => !showModal.value
 
     let syncing = false
@@ -1301,44 +1165,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- Tela de Login -->
-  <div v-if="isAuthLoading" class="auth-screen">
-    <div class="auth-card">
-      <div class="auth-logo">
-        <div class="logo-icon">S</div>
-        <span class="logo-text">Sincronia</span>
-      </div>
-      <p class="auth-loading-text">Verificando sessão...</p>
-      <div class="auth-spinner"></div>
-    </div>
-  </div>
-
-  <div v-else-if="!currentUser" class="auth-screen">
-    <div class="auth-card">
-      <div class="auth-logo">
-        <div class="logo-icon">S</div>
-        <span class="logo-text">Sincronia</span>
-      </div>
-      <p class="auth-subtitle">Faça login para continuar</p>
-      
-      <button @click="handleLogin" class="google-login-btn">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 48 48">
-          <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
-          <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
-          <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
-          <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
-        </svg>
-        <span>Entrar com Google</span>
-      </button>
-
-      <p v-if="authError" class="auth-error">{{ authError }}</p>
-
-      <div class="auth-version">Sincronia v{{ version }}</div>
-    </div>
-  </div>
-
-  <!-- App Principal -->
-  <div v-else class="app-container">
+  <div class="app-container">
     
     <!-- TOAST CONTAINER -->
     <div class="toast-container">
@@ -1401,13 +1228,6 @@ onUnmounted(() => {
       
       <!-- SIDEBAR FOOTER & SYSTEM SETTINGS -->
       <footer class="sidebar-footer" style="display: flex; justify-content: space-between; align-items: center;">
-        <!-- User info -->
-        <div v-if="currentUser" class="user-info" style="display: flex; align-items: center; gap: 8px;">
-          <img v-if="currentUser.avatar" :src="currentUser.avatar" :alt="currentUser.name" class="user-avatar-small" />
-          <div v-else class="user-avatar-small user-avatar-placeholder">{{ currentUser.name?.charAt(0).toUpperCase() }}</div>
-          <span class="user-name-small">{{ currentUser.name?.split(' ')[0] }}</span>
-        </div>
-
         <div class="footer-buttons" style="display: flex; gap: 8px;">
           <button @click="toggleTheme" class="theme-toggle-btn" title="Alternar Tema Escuro/Claro">
             <!-- Light bulb or Sun icon depending on theme -->
@@ -1422,14 +1242,6 @@ onUnmounted(() => {
           
           <button @click="showSettingsModal = true" class="theme-toggle-btn" title="Configurações de Categorias">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </button>
-
-          <button @click="showLogoutConfirm = true" class="theme-toggle-btn" title="Sair">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-              <polyline points="16 17 21 12 16 7"/>
-              <line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
           </button>
         </div>
         
@@ -2361,23 +2173,6 @@ onUnmounted(() => {
         <footer class="modal-footer" style="padding: 16px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; background-color: var(--bg-secondary);">
           <button @click="showSettingsModal = false" class="btn-primary">Fechar Configurações</button>
         </footer>
-      </div>
-    </div>
-    
-    <!-- Logout Confirmation Modal -->
-    <div v-if="showLogoutConfirm" class="modal-overlay" @click.self="showLogoutConfirm = false">
-      <div class="modal-content" style="max-width: 400px;">
-        <div class="modal-header">
-          <h3 class="modal-title">Sair da conta</h3>
-          <button @click="showLogoutConfirm = false" class="modal-close-btn">&times;</button>
-        </div>
-        <div class="modal-body">
-          <p style="font-size: 14px; color: var(--text-secondary);">Deseja sair da sua conta?</p>
-        </div>
-        <div class="modal-footer">
-          <button @click="showLogoutConfirm = false" class="btn-secondary">Cancelar</button>
-          <button @click="handleLogout" class="btn-primary" style="background-color: var(--danger, #ef4444);">Sair</button>
-        </div>
       </div>
     </div>
     
