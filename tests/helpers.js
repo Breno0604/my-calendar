@@ -30,14 +30,25 @@ export async function seedStorage(page, { events = [], categories, theme = 'ligh
     if (args.fixedDate) {
       localStorage.setItem('sincronia_fixedDate', args.fixedDate)
     }
+    // Clear any stale Supabase auth tokens that could cause hanging requests
+    const keysToRemove = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && (key.startsWith('supabase.') || key.includes('supabase'))) {
+        keysToRemove.push(key)
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k))
   }, { theme, fixedDate })
 
-  // Mock Supabase REST — return seeded data in snake_case (Supabase format).
-  // Use route.fallback() to allow other routes (like interceptSupabase) to handle requests.
+  // Mock Supabase REST and Auth — return seeded data and no session.
   await page.route(/127\.0\.0\.1:9999/, async route => {
     const url = route.request().url()
     const method = route.request().method()
-    if (method === 'GET' && url.includes('/rest/v1/events')) {
+    if (url.includes('/auth/v1/')) {
+      // Return no session for auth endpoints
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) })
+    } else if (method === 'GET' && url.includes('/rest/v1/events')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dbEvents) })
     } else if (method === 'GET' && url.includes('/rest/v1/categories')) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dbCats) })
