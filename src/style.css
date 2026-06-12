@@ -52,7 +52,6 @@
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 20px;
-  --error: #ef4444;
   
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
@@ -96,7 +95,6 @@
   --modal-backdrop: rgba(0, 0, 0, 0.75);
   --glass-bg: rgba(17, 24, 39, 0.7);
   --glass-border: rgba(255, 255, 255, 0.05);
-  --error: #f87171;
 }
 
 /* Base Styles */
@@ -2098,103 +2096,6 @@ body {
 
 .series-instance-row:hover {
   background-color: var(--bg-secondary);
-}
-
-/* --- Login Screen --- */
-.login-screen {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  min-height: 100dvh;
-  background: var(--bg-primary);
-  padding: 20px;
-}
-
-.login-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 48px 40px;
-  max-width: 400px;
-  width: 100%;
-  text-align: center;
-}
-
-.login-logo {
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, var(--accent), #7c3aed);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 32px;
-  font-weight: 800;
-  color: #fff;
-  flex-shrink: 0;
-}
-
-.login-title {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.login-subtitle {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0;
-}
-
-.google-login-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: 100%;
-  padding: 12px 20px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-
-.google-login-btn:hover {
-  background: var(--bg-secondary);
-  border-color: var(--accent);
-}
-
-.google-icon {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-}
-
-.login-error {
-  font-size: 13px;
-  color: var(--error);
-  margin: 0;
-  padding: 8px 12px;
-  background: rgba(239, 68, 68, 0.1);
-  border-radius: var(--radius-sm);
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.logout-btn:hover {
-  background: var(--bg-secondary) !important;
-  color: var(--error) !important;
-  border-color: var(--error) !important;
 }
 
 

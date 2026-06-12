@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { deleteSeries, deleteOneInstance, editSeries, editOneInstance, moveSeries, moveOneInstance } from './services/recurrence.js'
 import * as dateService from './services/date.js'
 import * as recurService from './services/recurrence.js'
@@ -9,7 +9,6 @@ import * as mockService from './services/mock.js'
 import * as ioService from './services/io.js'
 import * as dbService from './services/db.js'
 import { getSupabase } from './lib/supabaseClient.js'
-import * as authService from './services/auth.js'
 import { version } from '../package.json'
 
 // --- State & Config ---
@@ -42,9 +41,6 @@ const selectedDate = ref(getInitialDate())
 const searchQuery = ref('')
 const searchInput = ref(null)
 const isDarkMode = ref(false)
-const currentUser = ref({ guest: true })
-const loginError = ref('')
-let authUnsubscribe = null
 
 // --- Dynamic Categories Data (Default loaded/saved in LocalStorage) ---
 const categoriesData = ref([
@@ -247,31 +243,6 @@ onMounted(() => {
     document.documentElement.classList.remove('dark')
   }
 
-  // Initialize auth state — only gate if Supabase is truly configured (not test/dev mock)
-  loginError.value = authService.checkUrlForError()
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-  if (supabaseUrl && supabaseUrl.startsWith('https://') && supabaseUrl.includes('supabase.co')) {
-    authService.getSession().then(result => {
-      if (result.success && result.data?.user) {
-        currentUser.value = result.data.user
-      } else if (result.success) {
-        currentUser.value = null
-      }
-    })
-  }
-  const unsubResult = authService.onAuthStateChange((event, session) => {
-    if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {
-      currentUser.value = session.user
-    } else if (event === 'SIGNED_OUT') {
-      currentUser.value = null
-    } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-      currentUser.value = session.user
-    }
-  })
-  if (unsubResult.success) {
-    authUnsubscribe = unsubResult.data.unsubscribe
-  }
-
   // Initialize filters map
   initializeFilters()
 
@@ -375,18 +346,6 @@ const toggleTheme = () => {
     document.documentElement.classList.remove('dark')
     localStorage.setItem('theme', 'light')
   }
-}
-
-const handleLogin = async () => {
-  const result = await authService.signInWithGoogle()
-  if (!result.success) {
-    loginError.value = result.error || 'Erro ao iniciar login.'
-  }
-}
-
-const handleLogout = async () => {
-  await authService.signOut()
-  currentUser.value = null
 }
 
 // --- Infinite Scroll ---
@@ -1202,27 +1161,11 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibility)
   if (pollId) clearInterval(pollId)
   dbService.unsubscribeAll()
-  if (authUnsubscribe) authUnsubscribe()
 })
 </script>
 
 <template>
-  <!-- LOGIN SCREEN (shown when not authenticated) -->
-  <div v-if="!currentUser" class="login-screen">
-    <div class="login-card">
-      <div class="login-logo">S</div>
-      <h1 class="login-title">Sincronia</h1>
-      <p class="login-subtitle">Faça login para continuar</p>
-      <button @click="handleLogin" class="google-login-btn">
-        <svg viewBox="0 0 48 48" class="google-icon"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="m6.306 14.691 6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>
-        Entrar com Google
-      </button>
-      <p v-if="loginError" class="login-error">{{ loginError }}</p>
-    </div>
-  </div>
-  
-  <!-- APP (authenticated) -->
-  <div v-else class="app-container">
+  <div class="app-container">
     
     <!-- TOAST CONTAINER -->
     <div class="toast-container">
@@ -1305,7 +1248,6 @@ onUnmounted(() => {
         <div style="font-size: 11px; color: var(--text-muted); font-weight: 500;">
           Sincronia v{{ version }}
         </div>
-        <button @click="handleLogout" class="logout-btn" title="Sair" style="background: none; border: 1px solid var(--border-color); color: var(--text-secondary); font-size: 11px; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: background 0.2s, color 0.2s;">Sair</button>
       </footer>
     </aside>
     
